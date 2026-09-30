@@ -1,0 +1,13 @@
+# 文本文件统一用 LF 存储，避免 Windows 检出时产生虚假 diff
+* text=auto eol=lf
+
+# 二进制：不做换行符转换，也不做 diff
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

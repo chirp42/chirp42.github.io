@@ -1,0 +1,41 @@
+# ── 本地内容：只在本机存在，不进公开仓库 ──────────────────────
+# 本仓库公开，只放站点本身的文件（HTML / 数据 / 必要配置）。
+# 开发用的笔记、脚本、密钥与缓存一律留在本地。
+
+# 工作计划笔记
+/PLAN.md
+
+# 本地脚本：隐私自查、题库转换等。站点是纯静态的，部署不需要它们。
+/tools/
+
+# 本地 Python 依赖目录（pypdf 等）
+.tools/
+
+# 本地缓存（Hugo / pip / 临时文件）
+.cache/
+
+# 一次性的本地操作脚本
+push-v0.1.cmd
+
+# 沙箱权限修复的恢复记录（本地临时产物）
+.acl-recovery/
+*.acl-probe.tmp
+
+# ── 通用忽略 ────────────────────────────────────────────────
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Hugo 构建产物与缓存
+blog/public/
+blog/resources/_gen/
+blog/.hugo_build.lock
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
