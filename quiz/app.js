@@ -762,8 +762,20 @@
     return row;
   }
 
+  /** 题目 id -> 它在当前级别题库里的序号（从 1 开始），用于答题卡编号 */
+  function bankNumbers(level) {
+    var ids = (levels && levels[level]) || [];
+    var map = {};
+    for (var i = 0; i < ids.length; i++) { map[ids[i]] = i + 1; }
+    return map;
+  }
+
   /**
-   * 答题卡：把本轮题目按顺序排成号码格，点任意格跳到该题。
+   * 答题卡：把本轮题目排成号码格，点任意格跳到该题。
+   *
+   * 格子上的编号是**题库里的原序号**（而不是本轮的第几格）：
+   * 随机练习时能看出抽到了哪些题，也能和错题本里的编号对上。
+   * 跳转用 data-index（本轮内的下标），与编号相互独立。
    *
    * 全部格子都可点——随机挑题练是合理用法，不要求按顺序推进。
    * 但「下一题」仍只在当前题作答过、或前面还有空题时才可用，
@@ -773,7 +785,7 @@
    * 不渲染题干，开销很小。
    */
   function renderAnswerSheet(q) {
-    var box = el('aside', 'sheet');
+    var box = el('section', 'sheet');
     box.setAttribute('data-sheet', 'grid');
 
     // 面板标题。与参考图一致：先写模式，再列题目编号与练习进度。
@@ -793,17 +805,22 @@
     var stat = el('div', 'sheet-stat', sheetStatText());
     box.appendChild(stat);
 
+    var nums = bankNumbers(currentLevel);
+
     var grid = el('div', 'sheet-grid');
     var cells = {};
 
     session.list.forEach(function (item, i) {
       var rec = session.records[item.id];
       var isCurrent = i === session.index;
+      // 格子上的编号取题库原序号（找不到时退回本轮序位）
+      var no = nums[item.id] || (i + 1);
 
       var cell = el('button', 'sheet-cell');
       cell.type = 'button';
       cell.setAttribute('data-index', String(i));
-      cell.textContent = String(i + 1);
+      cell.setAttribute('data-no', String(no));
+      cell.textContent = String(no);
 
       if (isCurrent) {
         cell.classList.add('is-current');
@@ -815,7 +832,7 @@
       }
       // 全部格子都可点：随机挑题练是合理用法，不再要求按顺序推进。
 
-      var label = '第 ' + (i + 1) + ' 题';
+      var label = '题库第 ' + no + ' 题';
       label += rec ? (rec.correct ? '，已答对' : '，已答错') : '，未作答';
       if (isCurrent) { label += '（当前）'; }
       cell.setAttribute('aria-label', label);
@@ -850,9 +867,10 @@
           var cell = cells[id];
           var rec = session.records[id];
           var i = Number(cell.getAttribute('data-index'));
+          var no = cell.getAttribute('data-no');
           cell.classList.remove('is-current', 'is-right', 'is-wrong');
           delete cell.attributes['data-answered'];
-          var label = '第 ' + (i + 1) + ' 题';
+          var label = '题库第 ' + no + ' 题';
           if (i === session.index) {
             cell.classList.add('is-current');
             cell.setAttribute('aria-current', 'true');
@@ -878,6 +896,9 @@
     var record = (showsRecords() ? session.records[q.id] : null) || null;
     var isMulti = q.answers.length > 1;
 
+    // 整个练习区是一张卡片：左侧题干与选项，右侧答题卡区块。
+    // 早先做成了两块各带边框的卡片并排，看起来是分离的两块，
+    // 与参考图不符（那里右栏只是卡片内部的一个区块）。
     var card = el('section', 'card');
     card.setAttribute('data-qid', q.id);
     card.setAttribute('data-type', isMulti ? 'multiple' : 'single');
@@ -895,6 +916,10 @@
     bar.appendChild(left);
     bar.appendChild(quit);
     card.appendChild(bar);
+
+    var wrap = el('div', 'practice');
+    var qside = el('div', 'q-side');
+    wrap.appendChild(qside);
 
     // 题号与正文分两列：题号列宽度在 CSS 里定，题干与选项文字左对齐
     var qrow = el('div', 'q-row');
@@ -949,8 +974,13 @@
     actions.appendChild(nextBtn);
     qbody.appendChild(actions);
 
-    card.appendChild(qrow);
-    card.appendChild(qbody);
+    // 左侧：题号 + 正文；右侧：答题卡区块
+    qside.appendChild(qrow);
+    qside.appendChild(qbody);
+
+    var sheet = renderAnswerSheet(q);
+    wrap.appendChild(sheet.node);
+    card.appendChild(wrap);
 
     var lastIndex = session.list.length - 1;
 
@@ -1055,15 +1085,9 @@
       renderQuestion();
     });
 
-    // 题目与答题卡并排：宽屏左右分栏，窄屏自动上下堆叠（见 CSS .practice）
-    var sheet = renderAnswerSheet(q);
-    var wrap = el('div', 'practice');
-    wrap.appendChild(card);
-    wrap.appendChild(sheet.node);
-
     clear(mainEl);
     useWideLayout();
-    mainEl.appendChild(wrap);
+    mainEl.appendChild(card);
     window.scrollTo(0, 0);
   }
 

@@ -247,23 +247,35 @@ h1 {
   margin-top: .15rem;
 }
 
-/* ---------------- 练习页布局（题目 + 答题卡） ---------------- */
+/* ---------------- 练习页布局（题干 + 答题卡，同一张卡片内） ---------------- */
 
 /*
- * 宽屏左右分栏；窄屏自动堆叠（grid 只有一列时行为与普通块级一致）。
- * 用 auto-fit + minmax 而不是媒体查询：答题卡本身需要一个最小宽度才放得下
- * 号码格，交给浏览器按实际宽度决定分不分栏更稳。
+ * 卡片内部的两栏：左侧题干与选项，右侧答题卡区块。
+ * 窄屏自动堆叠成一列（此时答题卡的分隔线转成顶部横线）。
+ * 用 stretch 让两栏等高——否则右栏内容更高、左栏更矮，顶边看起来不齐。
  */
 .practice {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 1rem;
-  align-items: start;
+  gap: 1.5rem;
+  align-items: stretch;
 }
+
+.q-side { min-width: 0; }
 
 @media (min-width: 64rem) {
   /* 左栏可伸缩，右栏随屏幕变宽（参考图里右栏约占三分之一） */
   .practice { grid-template-columns: minmax(0, 1fr) clamp(24rem, 28vw, 30rem); }
+}
+
+/* 堆叠时答题卡在下方：左侧分隔线改成顶部横线 */
+@media (max-width: 63.999rem) {
+  .sheet {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 1.25rem;
+  }
 }
 
 /* ---------------- 进度与题干 ---------------- */
@@ -465,15 +477,12 @@ h1 {
 /* ---------------- 答题卡 ---------------- */
 
 /*
- * 已从题目卡片内移出，成为并排的独立面板（宽屏在右，窄屏在题目下方）。
- * 宽屏时随页面滚动（不用 sticky：答题卡只显示一轮的号码，与题目一一对应，
- * 钉住反而会遮住下方内容）。
+ * 答题卡已并入题目卡片，是卡片内部的一个区块（不是另一张卡片）。
+ * 宽屏时靠一条左侧分隔线与题干分开；窄屏堆叠时分隔线转到顶部（见文末媒体查询）。
  */
 .sheet {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: clamp(1rem, 2.5vw, 1.5rem);
+  border-left: 1px solid var(--line);
+  padding-left: clamp(1rem, 2.5vw, 1.75rem);
 }
 
 /* 面板标题「练习模式」 */
@@ -481,7 +490,7 @@ h1 {
   font-size: 1.2rem;
   font-weight: 700;
   padding-bottom: .6rem;
-  margin-bottom: .6rem;
+  margin-bottom: .75rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -531,7 +540,12 @@ h1 {
   background: var(--card);
   color: var(--fg);
   font: inherit;
-  font-size: 1rem;
+  /*
+   * 格子里是题库原序号，最多三位数（C 级 1282）。
+   * 字号用 clamp 跟着格子宽度走，三位数也放得下。
+   */
+  font-size: clamp(.72rem, 1.1vw, .95rem);
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   cursor: pointer;
 }
