@@ -3,15 +3,15 @@
  * 数据来自 ../data/questions.json（题池）与 ../data/levels.json（级别映射）。
  * 题目内容与级别归属分离：换题库只换数据，本文件不动。
  *
- * 范围：v0.3 三类架构 + A 类数据、顺序/随机出题、即时判分、前后翻题；
- *       v0.4 作答记录与练习进度本地持久化、错题本、导出 / 导入。
+ * 范围：v0.3 出题与判分、前后翻题；v0.4 作答记录与进度本地持久化、错题本、
+ *       导出 / 导入；v0.5 开放 B / C 级并支持切换（三级共用同一份题池）。
  *
  * 答题规则：一道题只有第一次提交计入成绩；回看已答的题是只读展示。
  * 重做只发生在错题本里（点「重做这题」会清掉该题记录再作答）。
  *
  * 持久化：localStorage 存「每个级别的整份练习状态」——出题顺序、题目列表、
  * 当前位置、以及按题目 id 记录的作答结果。恢复时按存的 id 顺序重建，
- * 因此随机练习的顺序也能原样恢复。
+ * 因此随机练习的顺序也能原样恢复。另存当前选中的级别。
  * 若浏览器禁用本地存储，则退化为仅当次会话有效，并在界面上明确提示。
  *
  * 实现注意：整张卡片先在内存里建好，最后一次性 appendChild 挂载。
@@ -21,9 +21,18 @@
 'use strict';
 
 (function () {
-  // 当前开放练习的级别。B / C 的数据与切换在 v0.5 开放。
-  var LEVEL = 'A';
   var LEVEL_LABEL = { A: 'A 类', B: 'B 类', C: 'C 类' };
+  var LEVEL_ORDER = ['A', 'B', 'C'];
+  var DEFAULT_LEVEL = 'A';
+
+  /**
+   * 当前练习的级别。v0.5 起可在 A / B / C 之间切换。
+   *
+   * 三级共用同一份题池：levels.json 给的是「题目 id 列表」，590 题被三级共有，
+   * 所以这里是纯前端的选择，不需要重新生成任何数据。
+   * 级别选择会存进本地（store.currentLevel），下次打开还是这一级。
+   */
+  var currentLevel = DEFAULT_LEVEL;
 
   var DATA_DIR = '../data/';
   var STORAGE_KEY = 'chirp42.quiz.v1';
@@ -107,7 +116,7 @@
   var storageOk = true;   // 浏览器是否真的能写本地存储
 
   function emptyStore() {
-    return { version: 1, updatedAt: '', levels: {} };
+    return { version: 1, updatedAt: '', currentLevel: DEFAULT_LEVEL, levels: {} };
   }
 
   function loadStore() {
@@ -117,6 +126,10 @@
       var parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object') { return emptyStore(); }
       if (!parsed.levels || typeof parsed.levels !== 'object') { parsed.levels = {}; }
+      // 兼容 v0.4 及更早的数据：那时没有 currentLevel 字段
+      if (LEVEL_ORDER.indexOf(parsed.currentLevel) === -1) {
+        parsed.currentLevel = DEFAULT_LEVEL;
+      }
       return parsed;
     } catch (e) {
       storageOk = false;
@@ -128,7 +141,9 @@
     try {
       store.updatedAt = new Date().toISOString();
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-      storageOk = true;
+      // 注意：成功时**不**把 storageOk 翻回 true。
+      // 一旦本次会话确认过存储不可用，就是事实；否则「读失败→写成功」
+      // 会把已经给出的提示抹掉，用户明明存不进去却不再看到警告。
       return true;
     } catch (e) {
       storageOk = false;
@@ -150,7 +165,7 @@
    * 取某级别的作答记录表，**保证返回 store 里的那一份引用**。
    *
    * 不能写成「没有就返回 {}」——那是取值器返回临时对象，调用方
-   * `delete recordsOf(LEVEL)[id]` 会删在一个立刻被丢弃的对象上，
+   * `delete recordsOf(currentLevel)[id]` 会删在一个立刻被丢弃的对象上，
    * 记录其实没删掉，界面又因为读的是同一份临时对象而显示为未作答，
    * 结果就是「重做后仍显示已选选项」。所以这里缺什么就补什么，
    * 并让它成为 store 的一部分。
@@ -189,6 +204,32 @@
 
   var store = null;   // 首次启动时载入
 
+  // ---------------------------------------------------------------- 级别
+
+  /** 数据里实际可用的级别（按 A/B/C 顺序），缺的那级自动跳过 */
+  function availableLevels() {
+    var out = [];
+    for (var i = 0; i < LEVEL_ORDER.length; i++) {
+      var lv = LEVEL_ORDER[i];
+      if (levels && Array.isArray(levels[lv]) && levels[lv].length > 0) { out.push(lv); }
+    }
+    return out;
+  }
+
+  function levelLabel(level) {
+    return LEVEL_LABEL[level] || (level + ' 类');
+  }
+
+  /** 切换级别并记住选择。切换后回到该级别的首页。 */
+  function setLevel(level) {
+    if (availableLevels().indexOf(level) === -1) { return; }
+    currentLevel = level;
+    store.currentLevel = level;
+    saveStore(store);
+    session = null;              // 上一级别的会话不再适用
+    renderHome();
+  }
+
   // ---------------------------------------------------------------- 数据
 
   function fetchJson(url) {
@@ -211,8 +252,15 @@
       if (!Array.isArray(allQuestions) || allQuestions.length === 0) {
         throw new Error('questions.json 内容为空或格式不对');
       }
-      if (!levels || !Array.isArray(levels[LEVEL])) {
-        throw new Error('levels.json 缺少 ' + LEVEL + ' 级数据');
+      if (!levels || typeof levels !== 'object') {
+        throw new Error('levels.json 内容为空或格式不对');
+      }
+      if (availableLevels().length === 0) {
+        throw new Error('levels.json 里没有任何可用的级别数据');
+      }
+      // 数据里没有当前级别时，退回第一个可用级别（而不是直接报错）
+      if (availableLevels().indexOf(currentLevel) === -1) {
+        currentLevel = availableLevels()[0];
       }
 
       questionsById = {};
@@ -224,7 +272,7 @@
 
   /** 取当前级别的题目，顺序按 levels.json */
   function questionsForLevel() {
-    var ids = levels[LEVEL] || [];
+    var ids = levels[currentLevel] || [];
     var out = [];
     for (var i = 0; i < ids.length; i++) {
       var q = questionsById[ids[i]];
@@ -261,18 +309,48 @@
 
   // ---------------------------------------------------------------- 首页
 
+  /**
+   * 级别选择器。三级共用同一份题池（levels.json 只给题目 id 列表），
+   * 所以切换只是换一份 id 列表与一份练习进度，不需要重新取数据。
+   */
+  function renderLevelPicker() {
+    var box = el('div', 'levels');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', '选择级别');
+
+    availableLevels().forEach(function (lv) {
+      var st = levelStats(lv);
+      var total = (levels[lv] || []).length;
+      var isCurrent = lv === currentLevel;
+
+      var b = el('button', 'level' + (isCurrent ? ' is-current' : ''));
+      b.type = 'button';
+      b.setAttribute('data-level', lv);
+      b.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
+      b.appendChild(el('span', 'level-name', levelLabel(lv)));
+      b.appendChild(el('span', 'level-meta',
+        total + ' 题' + (st.done > 0 ? ' · 已答 ' + st.done : '')));
+      if (isCurrent) { b.disabled = true; }
+      b.addEventListener('click', function () { setLevel(lv); });
+      box.appendChild(b);
+    });
+
+    return box;
+  }
+
   function renderHome() {
     clear(mainEl);
     var pool = questionsForLevel();
-    var stats = levelStats(LEVEL);
-    var wrongCount = wrongIdsOf(LEVEL).length;
-    var saved = store.levels[LEVEL];
+    var stats = levelStats(currentLevel);
+    var wrongCount = wrongIdsOf(currentLevel).length;
+    var saved = store.levels[currentLevel];
 
     var card = el('section', 'card');
     card.appendChild(el('h1', null, '业余无线电操作证 · 模拟练习'));
+    card.appendChild(renderLevelPicker());
     card.appendChild(el('p', 'note',
-      LEVEL_LABEL[LEVEL] + ' 题库共 ' + pool.length + ' 题。' +
-      '题目内容与级别归属分离，B / C 级数据待 v0.5 开放。'));
+      '当前 ' + levelLabel(currentLevel) + ' 题库共 ' + pool.length + ' 题。' +
+      '级别只决定出题范围，题目内容与级别归属分离，切换级别不影响已记录的作答结果。'));
 
     var warn = storageWarning();
     if (warn) { card.appendChild(warn); }
@@ -525,12 +603,12 @@
       order: order,
       list: list,
       index: 0,
-      records: recordsOf(LEVEL)
+      records: recordsOf(currentLevel)
     };
   }
 
   function saveLevelState() {
-    store.levels[LEVEL] = {
+    store.levels[currentLevel] = {
       mode: session.mode,
       order: session.order,
       list: session.list.map(function (q) { return q.id; }),
@@ -551,7 +629,7 @@
 
   /** 按本地保存的顺序与位置恢复上次的练习（已答题只读回看） */
   function resumeSession() {
-    var saved = store.levels[LEVEL];
+    var saved = store.levels[currentLevel];
     var list = [];
     for (var i = 0; i < saved.list.length; i++) {
       var q = questionsById[saved.list[i]];
@@ -860,7 +938,7 @@
         }));
     }
 
-    var wrongCount = wrongIdsOf(LEVEL).length;
+    var wrongCount = wrongIdsOf(currentLevel).length;
     if (wrongCount > 0) {
       actions.appendChild(button('去错题本（' + wrongCount + '）', '', renderNotebook));
     }
@@ -880,12 +958,12 @@
 
   function renderNotebook() {
     clear(mainEl);
-    var wrongIds = wrongIdsOf(LEVEL);
+    var wrongIds = wrongIdsOf(currentLevel);
 
     var card = el('section', 'card');
     card.appendChild(el('h1', null, '错题本'));
     card.appendChild(el('p', 'note',
-      LEVEL_LABEL[LEVEL] + '：共 ' + wrongIds.length + ' 道错题。' +
+      LEVEL_LABEL[currentLevel] + '：共 ' + wrongIds.length + ' 道错题。' +
       '重做时会重新判定并更新记录；答对后即从错题本移除。'));
 
     var warn = storageWarning();
@@ -908,7 +986,7 @@
       item.appendChild(el('p', 'nb-text', q.question));
       var meta = el('p', 'note',
         '章节 ' + q.chapter + '　正确答案 ' + q.answers.join('') +
-        '　上次选择 ' + (recordsOf(LEVEL)[id].selected || []).join(''));
+        '　上次选择 ' + (recordsOf(currentLevel)[id].selected || []).join(''));
       item.appendChild(meta);
       item.appendChild(button('重做这题', 'btn-small', function () { redoQuestion(id); }));
       list.appendChild(item);
@@ -945,7 +1023,7 @@
   function redoQuestion(id) {
     var q = questionsById[id];
     if (!q) { renderNotebook(); return; }
-    delete recordsOf(LEVEL)[id];
+    delete recordsOf(currentLevel)[id];
     session = buildSession('redo', 'sequential', [q]);
     saveLevelState();
     renderQuestion();
@@ -953,11 +1031,31 @@
 
   // ---------------------------------------------------------------- 启动
 
+  /** 从 URL 参数取要打开哪一级，例如 ?level=B 或 #B */
+  function levelFromUrl() {
+    try {
+      var m = /[?&]level=([ABC])/i.exec(window.location.search || '');
+      if (!m) { m = /^#([ABC])$/i.exec(window.location.hash || ''); }
+      return m ? m[1].toUpperCase() : null;
+    } catch (e) { return null; }
+  }
+
   function start() {
     renderLoading();
     store = loadStore();
     if (!store.version) { store.version = 1; }
-    loadData().then(renderHome).catch(function (err) {
+
+    // 优先级：URL 参数 > 本地记住的选择 > 默认 A
+    // （URL 参数让「把 B 级练习链接发给别人」这种用法成立）
+    currentLevel = levelFromUrl() || store.currentLevel || DEFAULT_LEVEL;
+    store.currentLevel = currentLevel;
+
+    loadData().then(function () {
+      // 数据里没有这一级时，loadData 已把 currentLevel 退回可用级别
+      store.currentLevel = currentLevel;
+      saveStore(store);
+      renderHome();
+    }).catch(function (err) {
       renderError(err && err.message ? err.message : String(err));
     });
   }
