@@ -270,6 +270,39 @@ h1 {
   margin-bottom: .75rem;
 }
 
+/* 题号与正文两列。题号列宽固定，题干与选项文字因此左对齐。 */
+.q-row {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  align-items: start;
+}
+
+.q-num {
+  font-weight: 600;
+  line-height: 1.75;
+  color: var(--fg);
+}
+
+.q-body { min-width: 0; }
+
+/* 错题本里的章节号等宽显示（练习页已不显示章节） */
+.chapter {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 判定反馈的容器，占据选项与按钮之间 */
+.verdict-slot { margin-top: 1rem; }
+
+.verdict-slot:empty { margin-top: 0; }
+
+/* 题型标签一行 */
+.qtypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  margin-bottom: .6rem;
+}
+
 .qtext {
   margin: 0 0 1rem;
   font-size: 1.0625rem;
@@ -423,9 +456,9 @@ h1 {
 /* ---------------- 答题卡 ---------------- */
 
 /*
- * 已从题目卡片内移出，成为并排的独立面板。
- * 宽屏时随页面滚动（不再用 sticky：答题卡只显示一轮的号码，
- * 与题目一一对应，钉住反而会遮住下方内容）。
+ * 已从题目卡片内移出，成为并排的独立面板（宽屏在右，窄屏在题目下方）。
+ * 宽屏时随页面滚动（不用 sticky：答题卡只显示一轮的号码，与题目一一对应，
+ * 钉住反而会遮住下方内容）。
  */
 .sheet {
   background: var(--card);
@@ -434,27 +467,38 @@ h1 {
   padding: clamp(.75rem, 3vw, 1.25rem);
 }
 
-.sheet-qid {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: .85rem;
-  color: var(--muted);
+/* 面板标题「练习模式」 */
+.sheet-head {
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding-bottom: .6rem;
   margin-bottom: .6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* 名称 + 值 的信息行 */
+.meta-row {
+  display: grid;
+  grid-template-columns: 5.25rem minmax(0, 1fr);
+  gap: .5rem;
+  align-items: baseline;
+  margin-bottom: .35rem;
+  font-size: .9rem;
+}
+
+.meta-name { color: var(--muted); }
+
+.meta-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* 数字等宽，进度变化时不会左右抖动 */
+  font-variant-numeric: tabular-nums;
   word-break: break-all;
 }
-
-.sheet-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: .5rem;
-  margin-bottom: .75rem;
-}
-
-.sheet-title { font-weight: 600; }
 
 .sheet-stat {
   color: var(--muted);
   font-size: .8rem;
+  margin: .6rem 0 .75rem;
 }
 
 /* 题量大（B 级 1143、C 级 1282）时表格自身滚动，不挤压题目区 */

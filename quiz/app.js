@@ -732,8 +732,15 @@
   /** 答题卡头部的统计文案 */
   function sheetStatText() {
     var st = sessionStats();
-    return '对 ' + st.right + ' 错 ' + st.wrong +
-      ' · 已答 ' + sessionAnsweredCount() + '/' + session.list.length;
+    return '对 ' + st.right + ' 错 ' + st.wrong;
+  }
+
+  /** 右面板里的一行「名称  值」 */
+  function metaRow(name, value) {
+    var row = el('div', 'meta-row');
+    row.appendChild(el('span', 'meta-name', name));
+    row.appendChild(el('span', 'meta-val', value));
+    return row;
   }
 
   /**
@@ -747,18 +754,25 @@
    * 不渲染题干，开销很小。
    */
   function renderAnswerSheet(q) {
-    var box = el('section', 'sheet');
+    var box = el('aside', 'sheet');
     box.setAttribute('data-sheet', 'grid');
 
-    // 题目编号放在答题卡上方（原来在进度行显示章节，已去掉）
-    box.appendChild(el('div', 'sheet-qid', '题目编号：' + q.id));
+    // 面板标题。与参考图一致：先写模式，再列题目编号与练习进度。
+    box.appendChild(el('div', 'sheet-head', '练习模式'));
 
-    var head = el('div', 'sheet-head');
-    var title = el('span', 'sheet-title', '答题卡');
-    var stat = el('span', 'sheet-stat', sheetStatText());
-    head.appendChild(title);
-    head.appendChild(stat);
-    box.appendChild(head);
+    box.appendChild(metaRow('题目编号', q.id));
+    /*
+     * 练习进度 = 当前题在本轮里的序位（第几题 / 共几题）。
+     * 参考图上「题目编号 MC2-0001」配「练习进度 2 / 683」，即做到第 2 题。
+     * 注意不是「已答几题」——跳着做题时两者会不一样。
+     */
+    var progressRow = metaRow('练习进度',
+      (session.index + 1) + ' / ' + session.list.length);
+    box.appendChild(progressRow);
+    var progressVal = progressRow.childNodes[1];
+
+    var stat = el('div', 'sheet-stat', sheetStatText());
+    box.appendChild(stat);
 
     var grid = el('div', 'sheet-grid');
     var cells = {};
@@ -811,6 +825,7 @@
       /** 作答或翻页后刷新状态，避免整块重绘 */
       update: function () {
         stat.textContent = sheetStatText();
+        progressVal.textContent = (session.index + 1) + ' / ' + session.list.length;
         for (var id in cells) {
           if (!Object.prototype.hasOwnProperty.call(cells, id)) { continue; }
           var cell = cells[id];
@@ -852,7 +867,7 @@
     // 便于诊断「重做后仍显示已选」这类问题：明确标出渲染时是否带着记录
     card.setAttribute('data-record', record ? 'yes' : 'no');
 
-    // 进度行。章节信息不再显示在这里——题目编号改到答题卡上方。
+    // 进度行（跨满整张卡片）
     var bar = el('div', 'progress');
     var left = el('span', null, progressText());
     var quit = el('button', 'btn btn-small', '结束');
@@ -862,17 +877,24 @@
     bar.appendChild(quit);
     card.appendChild(bar);
 
-    card.appendChild(el('span', 'qtype',
+    // 题号与正文分两列：题号列宽度在 CSS 里定，题干与选项文字左对齐
+    var qrow = el('div', 'q-row');
+    qrow.appendChild(el('span', 'q-num', String(session.index + 1) + '.'));
+
+    var qbody = el('div', 'q-body');
+
+    var tags = el('div', 'qtypes');
+    tags.appendChild(el('span', 'qtype',
       isMulti ? '多选题（' + q.answers.length + ' 个答案）' : '单选题'));
-
     if (record) {
-      card.appendChild(el('span', 'qtype', '已作答，可前后翻看'));
+      tags.appendChild(el('span', 'qtype', '已作答，可前后翻看'));
     }
+    qbody.appendChild(tags);
 
-    card.appendChild(el('p', 'qtext', q.question));
+    qbody.appendChild(el('p', 'qtext', q.question));
 
     if (q.figure) {
-      card.appendChild(el('p', 'note',
+      qbody.appendChild(el('p', 'note',
         '本题附图 ' + q.figure + '（图片待补，先留占位）'));
     }
 
@@ -891,10 +913,10 @@
       inputs.push({ key: opt.key, input: input, label: label });
       fieldset.appendChild(label);
     });
-    card.appendChild(fieldset);
+    qbody.appendChild(fieldset);
 
-    var verdictSlot = el('div');
-    card.appendChild(verdictSlot);
+    var verdictSlot = el('div', 'verdict-slot');
+    qbody.appendChild(verdictSlot);
 
     var actions = el('div', 'actions');
     var prevBtn = el('button', 'btn', '上一题');
@@ -906,7 +928,10 @@
     actions.appendChild(prevBtn);
     actions.appendChild(submitBtn);
     actions.appendChild(nextBtn);
-    card.appendChild(actions);
+    qbody.appendChild(actions);
+
+    card.appendChild(qrow);
+    card.appendChild(qbody);
 
     var lastIndex = session.list.length - 1;
 
