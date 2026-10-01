@@ -67,8 +67,27 @@
     return out;
   }
 
+  /**
+   * 练习页需要更宽的容器（题干 + 答题卡双栏），其余页面是单栏。
+   * 用 .is-wide 放宽 main 的 max-width；窄屏下这个类没有实际影响
+   * （此时 .practice 自然堆叠成一列）。
+   */
+  function useWideLayout() {
+    if (mainEl && mainEl.classList) { mainEl.classList.add('is-wide'); }
+  }
+
+  function useNormalLayout() {
+    if (mainEl && mainEl.classList) { mainEl.classList.remove('is-wide'); }
+  }
+
+  /**
+   * 清空容器。顺带把布局恢复成常规宽度——所有渲染函数都以它开头，
+   * 因此「单栏页面不会残留练习页的宽布局」。练习页清空后再显式调
+   * useWideLayout()。
+   */
   function clear(node) {
     while (node.firstChild) { node.removeChild(node.firstChild); }
+    if (node === mainEl) { useNormalLayout(); }
   }
 
   /** 答对判定：所选与答案两个集合完全相等（多选顺序无关） */
@@ -1043,6 +1062,7 @@
     wrap.appendChild(sheet.node);
 
     clear(mainEl);
+    useWideLayout();
     mainEl.appendChild(wrap);
     window.scrollTo(0, 0);
   }

@@ -44,7 +44,7 @@ body {
   flex-direction: column;
   background: var(--bg);
   color: var(--fg);
-  font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+  font: 17px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
         "PingFang SC", "Hiragino Sans GB", sans-serif;
 }
 
@@ -85,12 +85,18 @@ body {
 
 /* ---------------- 布局 ---------------- */
 
+/*
+ * 宽度分级：练习页是双栏（题干 + 答题卡），需要更宽；
+ * 其余页面（首页、错题本、成绩）是单栏，太宽反而不好读。
+ */
 .wrap {
   width: 100%;
-  max-width: 44rem;
+  max-width: 52rem;
   margin: 0 auto;
   padding: 1rem;
 }
+
+.wrap.is-wide { max-width: 76rem; }
 
 .card {
   background: var(--card);
@@ -101,7 +107,7 @@ body {
 
 h1 {
   margin: 0 0 .75rem;
-  font-size: clamp(1.25rem, 5vw, 1.6rem);
+  font-size: clamp(1.4rem, 5vw, 1.9rem);
   line-height: 1.35;
 }
 
@@ -163,8 +169,9 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  padding: .6rem 1.25rem;
+  min-height: 54px;
+  padding: .7rem 1.5rem;
+  font-size: 1.0625rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--card);
@@ -207,8 +214,8 @@ h1 {
 
 .modes {
   display: grid;
-  gap: .75rem;
-  margin-top: 1.25rem;
+  gap: .875rem;
+  margin-top: 1.5rem;
 }
 
 .mode {
@@ -254,8 +261,9 @@ h1 {
   align-items: start;
 }
 
-@media (min-width: 60rem) {
-  .practice { grid-template-columns: minmax(0, 1fr) 22rem; }
+@media (min-width: 64rem) {
+  /* 左栏可伸缩，右栏随屏幕变宽（参考图里右栏约占三分之一） */
+  .practice { grid-template-columns: minmax(0, 1fr) clamp(24rem, 28vw, 30rem); }
 }
 
 /* ---------------- 进度与题干 ---------------- */
@@ -273,7 +281,7 @@ h1 {
 /* 题号与正文两列。题号列宽固定，题干与选项文字因此左对齐。 */
 .q-row {
   display: grid;
-  grid-template-columns: 1.75rem minmax(0, 1fr);
+  grid-template-columns: 2rem minmax(0, 1fr);
   align-items: start;
 }
 
@@ -304,16 +312,16 @@ h1 {
 }
 
 .qtext {
-  margin: 0 0 1rem;
-  font-size: 1.0625rem;
-  line-height: 1.75;
+  margin: 0 0 1.1rem;
+  font-size: 1.25rem;
+  line-height: 1.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .qtype {
   display: inline-block;
-  font-size: .75rem;
+  font-size: .8125rem;
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -325,7 +333,7 @@ h1 {
 
 .options {
   display: grid;
-  gap: .6rem;
+  gap: .7rem;
   margin: 0;
   padding: 0;
   border: 0;
@@ -334,9 +342,9 @@ h1 {
 .opt {
   display: flex;
   align-items: flex-start;
-  gap: .7rem;
-  min-height: 48px;
-  padding: .7rem .85rem;
+  gap: .8rem;
+  min-height: 56px;
+  padding: .9rem 1.05rem;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--card);
@@ -347,9 +355,9 @@ h1 {
 
 .opt input {
   flex: none;
-  width: 1.15rem;
-  height: 1.15rem;
-  margin: .3rem 0 0;
+  width: 1.3rem;
+  height: 1.3rem;
+  margin: .28rem 0 0;
   accent-color: var(--accent);
 }
 
@@ -357,7 +365,8 @@ h1 {
   flex: none;
   font-weight: 600;
   color: var(--muted);
-  min-width: 1.1rem;
+  min-width: 1.25rem;
+  font-size: 1.0625rem;
 }
 
 .opt-text {
@@ -417,8 +426,8 @@ h1 {
 
 .actions {
   display: flex;
-  gap: .6rem;
-  margin-top: 1rem;
+  gap: .75rem;
+  margin-top: 1.25rem;
 }
 
 .actions .btn { flex: 1; }
@@ -464,12 +473,12 @@ h1 {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: clamp(.75rem, 3vw, 1.25rem);
+  padding: clamp(1rem, 2.5vw, 1.5rem);
 }
 
 /* 面板标题「练习模式」 */
 .sheet-head {
-  font-size: 1.05rem;
+  font-size: 1.2rem;
   font-weight: 700;
   padding-bottom: .6rem;
   margin-bottom: .6rem;
@@ -479,11 +488,11 @@ h1 {
 /* 名称 + 值 的信息行 */
 .meta-row {
   display: grid;
-  grid-template-columns: 5.25rem minmax(0, 1fr);
+  grid-template-columns: 6rem minmax(0, 1fr);
   gap: .5rem;
   align-items: baseline;
-  margin-bottom: .35rem;
-  font-size: .9rem;
+  margin-bottom: .45rem;
+  font-size: 1rem;
 }
 
 .meta-name { color: var(--muted); }
@@ -497,16 +506,16 @@ h1 {
 
 .sheet-stat {
   color: var(--muted);
-  font-size: .8rem;
+  font-size: .9rem;
   margin: .6rem 0 .75rem;
 }
 
 /* 题量大（B 级 1143、C 级 1282）时表格自身滚动，不挤压题目区 */
 .sheet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr));
-  gap: .35rem;
-  max-height: 22rem;
+  grid-template-columns: repeat(auto-fill, minmax(2.6rem, 1fr));
+  gap: .5rem;
+  max-height: 26rem;
   overflow-y: auto;
   padding-right: .15rem;
 }
@@ -522,7 +531,7 @@ h1 {
   background: var(--card);
   color: var(--fg);
   font: inherit;
-  font-size: .8rem;
+  font-size: 1rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -575,7 +584,7 @@ h1 {
 
 /* 窄屏放不下数字时只留色块，仍可点 */
 @media (max-width: 26rem) {
-  .sheet-grid { grid-template-columns: repeat(auto-fill, minmax(1.6rem, 1fr)); }
+  .sheet-grid { grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr)); }
   .sheet-cell { font-size: 0; }
 }
 
