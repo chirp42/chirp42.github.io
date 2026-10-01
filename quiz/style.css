@@ -331,6 +331,16 @@ h1 {
 
 .actions .btn { flex: 1; }
 
+/* 上一题 / 下一题 / 提交 一起排在一行时，提交按钮占更宽 */
+.nav {
+  display: flex;
+  gap: .6rem;
+  margin-top: 1rem;
+}
+
+.nav .btn { flex: 1; }
+.nav .btn-nav { flex: 0 0 auto; min-width: 5.5rem; }
+
 /* 底部悬浮操作条，便于单手操作 */
 @media (max-width: 30rem) {
   .actions {

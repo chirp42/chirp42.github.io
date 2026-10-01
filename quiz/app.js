@@ -3,8 +3,11 @@
  * 数据来自 ../data/questions.json（题池）与 ../data/levels.json（级别映射）。
  * 题目内容与级别归属分离：换题库只换数据，本文件不动。
  *
- * v0.3 范围：三类架构 + A 类数据；顺序 / 随机出题；即时判分。
+ * v0.3 范围：三类架构 + A 类数据；顺序 / 随机出题；即时判分；前后翻题。
  * 进度与成绩只存在内存中（本地持久化在 v0.4）。
+ *
+ * 答题规则：一道题只有第一次提交计入成绩；回看已答的题是只读展示，
+ * 显示当时的选择与判定结果。这样可以前后翻阅而不必担心刷分或改错。
  *
  * 实现注意：整张卡片先在内存里建好，最后一次性 appendChild 挂载。
  * 不能在主内容已挂载后往里面追加会触发 change 的控件——那时后文才声明的
@@ -171,8 +174,9 @@
       order: order,
       list: order === 'random' ? shuffled(pool) : pool.slice(),
       index: 0,
-      selected: [],
-      submitted: false,
+      // 每题的作答记录：{ selected: [...], correct: bool }
+      // 只有第一次提交会写入，回看时据此还原状态
+      records: {},
       right: 0,
       wrong: 0
     };
@@ -183,21 +187,49 @@
     return session.list[session.index];
   }
 
+  function answeredCount() {
+    return session.right + session.wrong;
+  }
+
+  /** 第一道未作答的题的下标，全部答完则返回 -1 */
+  function firstUnanswered() {
+    for (var i = 0; i < session.list.length; i++) {
+      if (!session.records[i]) { return i; }
+    }
+    return -1;
+  }
+
+  /** 允许翻到的最远下标：已答过的最后一题，或第一道未答题（取较大者） */
+  function maxAllowedIndex() {
+    var frontier = firstUnanswered();
+    if (frontier === -1) { return session.list.length - 1; }
+    // 往前找最近的一道已答题；它和 frontier 都允许翻到，取较大者。
+    // 注意：不能找到就 return —— 那样在「只答了第 1 题、frontier 为 1」时
+    // 会返回 0，把刚答完的题锁在原地无法前进。
+    var lastAnswered = -1;
+    for (var i = frontier - 1; i >= 0; i--) {
+      if (session.records[i]) { lastAnswered = i; break; }
+    }
+    return lastAnswered > frontier ? lastAnswered : frontier;
+  }
+
   function progressText() {
-    var done = session.right + session.wrong;
-    var tail = done > 0 ? ' · 对 ' + session.right + ' 错 ' + session.wrong : '';
+    var tail = answeredCount() > 0
+      ? ' · 对 ' + session.right + ' 错 ' + session.wrong
+      : '';
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
   function renderQuestion() {
     var q = currentQuestion();
-    session.selected = [];
-    session.submitted = false;
+    var record = session.records[session.index] || null;
+    var isMulti = q.answers.length > 1;
 
     var card = el('section', 'card');
     // 记录当前题号，便于调试与自动化测试定位（不影响渲染）
     card.setAttribute('data-qid', q.id);
-    card.setAttribute('data-type', q.answers.length > 1 ? 'multiple' : 'single');
+    card.setAttribute('data-type', isMulti ? 'multiple' : 'single');
+    card.setAttribute('data-state', record ? 'answered' : 'fresh');
 
     // 进度行
     var bar = el('div', 'progress');
@@ -212,9 +244,12 @@
     card.appendChild(bar);
 
     // 题型
-    var isMulti = q.answers.length > 1;
     card.appendChild(el('span', 'qtype',
       isMulti ? '多选题（' + q.answers.length + ' 个答案）' : '单选题'));
+
+    if (record) {
+      card.appendChild(el('span', 'qtype', '已作答，可前后翻看'));
+    }
 
     // 题干
     card.appendChild(el('p', 'qtext', q.question));
@@ -241,47 +276,34 @@
     });
     card.appendChild(fieldset);
 
-    // 判定区与操作区：先建好节点，再挂监听，最后整体挂载
+    // 判定区与操作区
     var verdictSlot = el('div');
     card.appendChild(verdictSlot);
 
     var actions = el('div', 'actions');
+    var prevBtn = el('button', 'btn', '上一题');
+    prevBtn.type = 'button';
     var submitBtn = el('button', 'btn btn-primary', '提交答案');
     submitBtn.type = 'button';
-    submitBtn.disabled = true;
     var nextBtn = el('button', 'btn', '下一题');
     nextBtn.type = 'button';
-    nextBtn.hidden = true;
+    actions.appendChild(prevBtn);
     actions.appendChild(submitBtn);
     actions.appendChild(nextBtn);
     card.appendChild(actions);
 
-    // ---- 事件：选择 ----
-    fieldset.addEventListener('change', function () {
-      if (session.submitted) { return; }
-      session.selected = inputs
-        .filter(function (item) { return item.input.checked; })
-        .map(function (item) { return item.key; });
-      inputs.forEach(function (item) {
-        item.label.classList.toggle('is-selected', item.input.checked);
-      });
-      submitBtn.disabled = session.selected.length === 0;
-    });
+    var lastIndex = session.list.length - 1;
+    prevBtn.disabled = session.index === 0;
 
-    // ---- 事件：提交 ----
-    submitBtn.addEventListener('click', function () {
-      if (session.submitted) { return; }
-
-      var ok = isCorrect(session.selected, q.answers);
-      session.submitted = true;
-      if (ok) { session.right++; } else { session.wrong++; }
-
+    /** 把选项标成判定后的样子，并填充反馈 */
+    function showVerdict(rec) {
       inputs.forEach(function (item) {
         item.input.disabled = true;
+        item.input.checked = rec.selected.indexOf(item.key) !== -1;
         item.label.classList.add('is-locked');
         item.label.classList.remove('is-selected');
         var isAnswer = q.answers.indexOf(item.key) !== -1;
-        var picked = session.selected.indexOf(item.key) !== -1;
+        var picked = rec.selected.indexOf(item.key) !== -1;
         if (isAnswer) {
           item.label.classList.add('is-correct');
         } else if (picked) {
@@ -289,27 +311,78 @@
         }
       });
 
-      var verdict = el('div', 'verdict ' + (ok ? 'ok' : 'bad'));
-      verdict.appendChild(el('span', null, ok ? '回答正确' : '回答错误'));
+      var verdict = el('div', 'verdict ' + (rec.correct ? 'ok' : 'bad'));
+      verdict.appendChild(el('span', null, rec.correct ? '回答正确' : '回答错误'));
       var detail = '正确答案：' + q.answers.join('');
-      if (session.selected.length > 0) {
-        detail += '　你的选择：' + session.selected.slice().sort().join('');
+      if (rec.selected.length > 0) {
+        var pickedKeys = inputs
+          .filter(function (item) { return rec.selected.indexOf(item.key) !== -1; })
+          .map(function (item) { return item.key; });
+        detail += '　你的选择：' + pickedKeys.join('');
       }
       verdict.appendChild(el('span', 'answer', detail));
       verdictSlot.appendChild(verdict);
+    }
 
-      left.textContent = progressText();
+    /** 刷新按钮的可用状态与文案（翻题后状态会变） */
+    function refreshNav() {
+      prevBtn.disabled = session.index === 0;
+      nextBtn.disabled = session.index >= maxAllowedIndex();
+      nextBtn.textContent = session.index === lastIndex ? '查看成绩' : '下一题';
+    }
 
+    if (record) {
+      // 已答的题：只读回看，不提供重新作答
+      showVerdict(record);
       submitBtn.hidden = true;
-      nextBtn.hidden = false;
-      nextBtn.textContent = (session.index + 1 >= session.list.length)
-        ? '查看成绩' : '下一题';
-      nextBtn.focus();
+      left.textContent = progressText();
+    } else {
+      submitBtn.disabled = true;
+      // ---- 事件：选择 ----
+      fieldset.addEventListener('change', function () {
+        if (session.records[session.index]) { return; }
+        var picked = inputs
+          .filter(function (item) { return item.input.checked; })
+          .map(function (item) { return item.key; });
+        inputs.forEach(function (item) {
+          item.label.classList.toggle('is-selected', item.input.checked);
+        });
+        submitBtn.disabled = picked.length === 0;
+      });
+
+      // ---- 事件：提交 ----
+      submitBtn.addEventListener('click', function () {
+        // 已答过就不再计入（双保险：按钮已隐藏，但保留判断）
+        if (session.records[session.index]) { return; }
+
+        var picked = inputs
+          .filter(function (item) { return item.input.checked; })
+          .map(function (item) { return item.key; });
+        if (picked.length === 0) { return; }
+
+        var ok = isCorrect(picked, q.answers);
+        session.records[session.index] = { selected: picked, correct: ok };
+        if (ok) { session.right++; } else { session.wrong++; }
+
+        showVerdict(session.records[session.index]);
+        left.textContent = progressText();
+        submitBtn.hidden = true;
+        refreshNav();
+        if (!nextBtn.disabled) { nextBtn.focus(); }
+      });
+    }
+    refreshNav();
+
+    // ---- 事件：前后翻题 ----
+    prevBtn.addEventListener('click', function () {
+      if (session.index === 0) { return; }
+      session.index--;
+      renderQuestion();
     });
 
-    // ---- 事件：下一题 ----
     nextBtn.addEventListener('click', function () {
-      if (session.index + 1 >= session.list.length) {
+      if (nextBtn.disabled) { return; }
+      if (session.index === lastIndex) {
         renderSummary();
         return;
       }
@@ -325,7 +398,7 @@
   // ---------------------------------------------------------------- 成绩
 
   function renderSummary() {
-    var done = session.right + session.wrong;
+    var done = answeredCount();
     var total = session.list.length;
     var rate = done > 0 ? Math.round((session.right / done) * 100) : 0;
 
@@ -343,18 +416,30 @@
 
     var actions = el('div', 'actions');
 
-    // 有未作答的题时，从下一题继续
-    if (done > 0 && session.index + 1 < total) {
+    // 有未作答的题时，回到第一道未答题
+    var frontier = firstUnanswered();
+    if (frontier !== -1) {
       var resumeBtn = el('button', 'btn btn-primary', '继续未答的题');
       resumeBtn.type = 'button';
       resumeBtn.addEventListener('click', function () {
-        session.index++;
+        session.index = frontier;
         renderQuestion();
       });
       actions.appendChild(resumeBtn);
     }
 
-    var againBtn = el('button', 'btn' + (actions.childNodes.length ? '' : ' btn-primary'), '再练一次');
+    // 答过题才给“回看已答的题”，从第一题开始可前后翻
+    if (done > 0) {
+      var reviewBtn = el('button', 'btn' + (frontier === -1 ? ' btn-primary' : ''), '回看已答的题');
+      reviewBtn.type = 'button';
+      reviewBtn.addEventListener('click', function () {
+        session.index = 0;
+        renderQuestion();
+      });
+      actions.appendChild(reviewBtn);
+    }
+
+    var againBtn = el('button', 'btn' + (done === 0 ? ' btn-primary' : ''), '再练一次');
     againBtn.type = 'button';
     againBtn.addEventListener('click', renderModeSelect);
     actions.appendChild(againBtn);
