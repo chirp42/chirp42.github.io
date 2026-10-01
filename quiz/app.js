@@ -603,7 +603,13 @@
       order: order,
       list: list,
       index: 0,
-      records: recordsOf(currentLevel)
+      records: recordsOf(currentLevel),
+      /**
+       * 本轮提交过作答的题目 id。用来区分「本轮已作答」与「历史记录」：
+       * 重做模式下题目一律显示为未作答，但记录表里可能有旧值，
+       * 靠这个集合才能正确判断翻页与统计。
+       */
+      answered: {}
     };
   }
 
@@ -657,17 +663,21 @@
     return session.list[session.index];
   }
 
-  function answeredCount() {
-    return Object.keys(session.records).length;
-  }
-
+  /** 本轮答对/答错数，只看本轮提交过的题（不受历史记录影响） */
   function sessionStats() {
     var right = 0, wrong = 0;
-    for (var id in session.records) {
-      if (!Object.prototype.hasOwnProperty.call(session.records, id)) { continue; }
-      if (session.records[id].correct) { right++; } else { wrong++; }
+    for (var id in session.answered) {
+      if (!Object.prototype.hasOwnProperty.call(session.answered, id)) { continue; }
+      var rec = session.records[id];
+      if (!rec) { continue; }
+      if (rec.correct) { right++; } else { wrong++; }
     }
     return { right: right, wrong: wrong };
+  }
+
+  /** 本轮是否还有未作答的题 */
+  function hasUnansweredInSession() {
+    return sessionAnsweredCount() < session.list.length;
   }
 
   /** 第一道未作答的题的下标，全部答完则返回 -1 */
@@ -678,24 +688,24 @@
     return -1;
   }
 
-  /** 允许翻到的最远下标：已答过的最后一题，或第一道未答题（取较大者） */
-  function maxAllowedIndex() {
-    var frontier = firstUnanswered();
-    if (frontier === -1) { return session.list.length - 1; }
-    // 注意：不能找到就 return —— 那样在「只答了第 1 题、frontier 为 1」时
-    // 会返回 0，把刚答完的题锁在原地无法前进。
-    var lastAnswered = -1;
-    for (var i = frontier - 1; i >= 0; i--) {
-      if (session.records[session.list[i].id]) { lastAnswered = i; break; }
-    }
-    return lastAnswered > frontier ? lastAnswered : frontier;
+  /**
+   * 「下一题」是否可用。
+   *
+   * 允许答题卡自由跳题之后，判断条件不能再是「当前下标是否超过 frontier」：
+   * 直接跳到第 500 题作答时，500 远在 frontier 之后，那样会被锁住。
+   * 现在的规则是——当前题在本轮已作答，或前面还有空题（可以先回头补），
+   * 就可以往下翻。
+   */
+  function canGoNext() {
+    if (session.index >= session.list.length - 1) { return true; }  // 最后一题是「查看成绩」
+    if (isAnsweredThisSession(currentQuestion())) { return true; }
+    return hasUnansweredInSession();
   }
 
   function progressText() {
     var st = sessionStats();
-    var tail = (st.right + st.wrong) > 0
-      ? ' · 对 ' + st.right + ' 错 ' + st.wrong
-      : '';
+    var done = sessionAnsweredCount();
+    var tail = done > 0 ? ' · 对 ' + st.right + ' 错 ' + st.wrong : '';
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
@@ -709,17 +719,29 @@
     return session.mode === 'redo';
   }
 
-  /** 某道题是否已提交过作答（按当前级别的记录表） */
-  function isAnswered(q) {
-    return !!session.records[q.id];
+  /** 某道题是否在**本轮**提交过作答 */
+  function isAnsweredThisSession(q) {
+    return !!session.answered[q.id];
+  }
+
+  /** 本轮已作答的题数（用于进度与成绩，不受历史记录影响） */
+  function sessionAnsweredCount() {
+    return Object.keys(session.answered).length;
+  }
+
+  /** 答题卡头部的统计文案 */
+  function sheetStatText() {
+    var st = sessionStats();
+    return '对 ' + st.right + ' 错 ' + st.wrong +
+      ' · 已答 ' + sessionAnsweredCount() + '/' + session.list.length;
   }
 
   /**
-   * 答题卡：把本轮题目按顺序排成号码格，点已答的格可跳到该题。
+   * 答题卡：把本轮题目按顺序排成号码格，点任意格跳到该题。
    *
-   * 跳转规则与「上一题 / 下一题」保持一致——**不能跳过未作答的题**，
-   * 所以未答的格子是禁用状态。这样将来做模拟考试、允许自由跳转时，
-   * 只需把这里的禁用条件放开，不必改结构。
+   * 全部格子都可点——随机挑题练是合理用法，不要求按顺序推进。
+   * 但「下一题」仍只在当前题作答过、或前面还有空题时才可用，
+   * 避免一进来就把整轮翻过去。
    *
    * 题量大时（B 级 1143、C 级 1282）表格可滚动，且只渲染号码与状态，
    * 不渲染题干，开销很小。
@@ -730,9 +752,7 @@
 
     var head = el('div', 'sheet-head');
     var title = el('span', 'sheet-title', '答题卡');
-    var stat = el('span', 'sheet-stat',
-      '对 ' + sessionStats().right + ' 错 ' + sessionStats().wrong +
-      ' · ' + (session.index + 1) + '/' + session.list.length);
+    var stat = el('span', 'sheet-stat', sheetStatText());
     head.appendChild(title);
     head.appendChild(stat);
     box.appendChild(head);
@@ -756,18 +776,12 @@
       if (rec) {
         cell.classList.add(rec.correct ? 'is-right' : 'is-wrong');
         cell.setAttribute('data-answered', 'yes');
-      } else if (!isCurrent) {
-        // 与翻页按钮同一条规则：未作答的题不允许跳过。
-        // 当前题本身不禁用——否则整块答题卡看起来都是灰的，像不能点。
-        cell.disabled = true;
       }
+      // 全部格子都可点：随机挑题练是合理用法，不再要求按顺序推进。
 
       var label = '第 ' + (i + 1) + ' 题';
-      if (rec) {
-        label += rec.correct ? '，已答对' : '，已答错';
-      } else {
-        label += '，未作答，不可跳转';
-      }
+      label += rec ? (rec.correct ? '，已答对' : '，已答错') : '，未作答';
+      if (isCurrent) { label += '（当前）'; }
       cell.setAttribute('aria-label', label);
 
       cells[item.id] = cell;
@@ -780,7 +794,6 @@
       if (!target || !target.getAttribute) { return; }
       var idx = target.getAttribute('data-index');
       if (idx === null || idx === undefined) { return; }
-      if (target.disabled) { return; }
       var i = Number(idx);
       if (!(i >= 0) || i >= session.list.length || i === session.index) { return; }
       session.index = i;
@@ -794,9 +807,7 @@
       node: box,
       /** 作答或翻页后刷新状态，避免整块重绘 */
       update: function () {
-        var st = sessionStats();
-        stat.textContent = '对 ' + st.right + ' 错 ' + st.wrong +
-          ' · ' + (session.index + 1) + '/' + session.list.length;
+        stat.textContent = sheetStatText();
         for (var id in cells) {
           if (!Object.prototype.hasOwnProperty.call(cells, id)) { continue; }
           var cell = cells[id];
@@ -804,27 +815,26 @@
           var i = Number(cell.getAttribute('data-index'));
           cell.classList.remove('is-current', 'is-right', 'is-wrong');
           delete cell.attributes['data-answered'];
+          var label = '第 ' + (i + 1) + ' 题';
           if (i === session.index) {
             cell.classList.add('is-current');
             cell.setAttribute('aria-current', 'true');
+            label += '（当前）';
           } else {
             delete cell.attributes['aria-current'];
           }
           if (rec) {
             cell.classList.add(rec.correct ? 'is-right' : 'is-wrong');
             cell.setAttribute('data-answered', 'yes');
-            cell.disabled = false;
-            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 题，已答' +
-              (rec.correct ? '对' : '错'));
+            label += rec.correct ? '，已答对' : '，已答错';
           } else {
-            cell.disabled = i !== session.index;
-            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 题，未作答' +
-              (i === session.index ? '（当前）' : '，不可跳转'));
+            label += '，未作答';
           }
+          cell.setAttribute('aria-label', label);
         }
       }
     };
-    }
+  }
 
   function renderQuestion() {
     var q = currentQuestion();
@@ -932,20 +942,10 @@
       verdictSlot.appendChild(verdict);
     }
 
-    /**
-     * 刷新翻页按钮。两种模式的前进规则不同：
-     * - 有记录模式（resume）：只能前进到「第一道未答题」，作答前不能跳过。
-     * - redo 模式：整轮都是未作答，前进不受已答记录限制，但未提交前仍不可跳过，
-     *   否则一进来就能随便翻。
-     */
+    /** 刷新翻页按钮（规则见 canGoNext） */
     function refreshNav() {
       prevBtn.disabled = session.index === 0;
-      if (session.mode === 'redo') {
-        // 本轮内已提交的题才算已作答
-        nextBtn.disabled = session.index !== lastIndex && !session.records[q.id];
-      } else {
-        nextBtn.disabled = session.index >= maxAllowedIndex();
-      }
+      nextBtn.disabled = !canGoNext();
       nextBtn.textContent = session.index === lastIndex ? '查看成绩' : '下一题';
     }
 
@@ -980,6 +980,7 @@
           selected: picked,
           correct: isCorrect(picked, q.answers)
         };
+        session.answered[q.id] = true;   // 记入本轮
         // 作答后立刻落盘，并把当前位置一起记下：
         // 否则「继续练习」会回到上一道未答题，而不是接着往下。
         saveLevelState();
@@ -1020,22 +1021,49 @@
 
   // ---------------------------------------------------------------- 成绩
 
+  /** 成绩页的一行：本轮 / 本级累计 */
+  function summaryRow(name, right, wrong, done, total, rate) {
+    var row = el('div', 'summary-row');
+    row.appendChild(el('span', 'summary-name', name));
+    var val = el('span', 'summary-val',
+      '已答 ' + done + ' / ' + total + ' 题，对 ' + right + ' 错 ' + wrong);
+    if (done > 0) { val.textContent += '，正确率 ' + rate + '%'; }
+    row.appendChild(val);
+    return row;
+  }
+
   function renderSummary() {
-    var st = sessionStats();
+    var st = sessionStats();          // 只看本轮提交过的题
     var done = st.right + st.wrong;
     var total = session.list.length;
     var rate = done > 0 ? Math.round((st.right / done) * 100) : 0;
 
+    var lv = levelStats(currentLevel);   // 该级别累计（含以前各轮）
+    var lvTotal = questionsForLevel().length;
+    var lvRate = lv.done > 0 ? Math.round((lv.right / lv.done) * 100) : 0;
+
+    // 标题看答题卡上有没有已答的题（不是只看本轮）：
+    // 进入一个已有记录的级别直接点结束时，虽然本轮一题没答，
+    // 但确实有成绩可看，显示「本次练习」会让人以为记录丢了。
+    var anyAnswered = false;
+    for (var ai = 0; ai < session.list.length; ai++) {
+      if (session.records[session.list[ai].id]) { anyAnswered = true; break; }
+    }
     clear(mainEl);
     var card = el('section', 'card');
-    card.appendChild(el('h1', null, done === 0 ? '本次练习' : '本次成绩'));
+    card.appendChild(el('h1', null, anyAnswered ? '本次成绩' : '本次练习'));
 
-    if (done === 0) {
+    // 本轮与累计可能不同（例如上一轮答过、这一轮直接点结束），
+    // 所以两个数都给出来，避免只看一个造成误解。
+    var rows = el('div', 'summary');
+    rows.appendChild(summaryRow('本轮', st.right, st.wrong, done, total, rate));
+    rows.appendChild(summaryRow(levelLabel(currentLevel) + '累计',
+      lv.right, lv.wrong, lv.done, lvTotal, lvRate));
+    card.appendChild(rows);
+
+    if (done === 0 && lv.done === 0) {
       card.appendChild(el('p', 'note', '还没有作答记录。'));
     } else {
-      card.appendChild(el('p', 'note',
-        '已答 ' + done + ' / ' + total + ' 题，答对 ' + st.right +
-        ' 题，答错 ' + st.wrong + ' 题，正确率 ' + rate + '%。'));
       card.appendChild(el('p', 'note',
         '记录已保存在本机，刷新或关掉页面都不会丢。'));
     }
@@ -1051,7 +1079,9 @@
       }));
     }
 
-    if (done > 0) {
+    // 这两处的判断用「该级别累计」而不是本轮：
+    // 本轮一题没答但以前答过时，仍然应该能回看、并且不必被当成首次练习。
+    if (lv.done > 0) {
       actions.appendChild(button('回看已答的题', frontier === -1 ? 'btn-primary' : '',
         function () {
           session.index = 0;
@@ -1065,7 +1095,7 @@
       actions.appendChild(button('去错题本（' + wrongCount + '）', '', renderNotebook));
     }
 
-    actions.appendChild(button('回首页', done === 0 ? 'btn-primary' : '', renderHome));
+    actions.appendChild(button('回首页', lv.done === 0 ? 'btn-primary' : '', renderHome));
 
     card.appendChild(actions);
     mainEl.appendChild(card);
