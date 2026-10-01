@@ -211,15 +211,26 @@
     if (!box.records) { box.records = {}; }
     if (!box.sessions || typeof box.sessions !== 'object') { box.sessions = {}; }
 
-    // 迁移：旧的顶层 list/index 搬到 sessions.sequential
+    /*
+     * 迁移 v0.5.8 及更早的扁平结构：levels.A = { order, list, index, records }
+     *
+     * 关键：旧结构只有一份 list，它**可能是随机练习的乱序列表**。
+     * 不能无条件当成顺序模式进度——否则升级后顺序模式会按乱序出题
+     * （用户报告过这个现象）。
+     */
     if (Array.isArray(box.list)) {
-      if (!box.sessions.sequential) {
-        box.sessions.sequential = {
-          list: box.list,
-          index: typeof box.index === 'number' ? box.index : 0,
-          // 旧版本没有 answered 集合，按现有记录推断本轮已答的题
-          answered: inferAnswered(box.list, box.records)
-        };
+      var wasRandom = box.order === 'random';
+      var oldSession = {
+        list: box.list,
+        index: typeof box.index === 'number' ? box.index : 0,
+        // 旧版本没有 answered 集合，按现有记录推断本轮已答的题
+        answered: inferAnswered(box.list, box.records)
+      };
+      if (wasRandom) {
+        // 乱序列表对随机模式有效，顺序模式留空让它从头按题库顺序开始
+        if (!box.sessions.random) { box.sessions.random = oldSession; }
+      } else if (!box.sessions.sequential) {
+        box.sessions.sequential = oldSession;
       }
       delete box.list;
       delete box.index;
@@ -230,6 +241,27 @@
       saveStore(store);
     }
     return box;
+  }
+
+  /**
+   * 判断一份保存的题目列表是否就是题库的（连续）顺序。
+   *
+   * 用于兜底：万一顺序模式的进度里混进了乱序列表（例如旧数据迁移时
+   * 判错了 order），进入时自动改回题库顺序，而不是照乱序出题。
+   */
+  function isBankOrdered(list, level) {
+    var bank = (levels && levels[level]) || [];
+    if (list.length > bank.length) { return false; }
+    // 从题目 id 反查它在题库里的下标，检查是否严格递增
+    var posOf = {};
+    for (var i = 0; i < bank.length; i++) { posOf[bank[i]] = i; }
+    var prev = -1;
+    for (var j = 0; j < list.length; j++) {
+      var p = posOf[list[j]];
+      if (p === undefined || p <= prev) { return false; }
+      prev = p;
+    }
+    return true;
   }
 
   /** 从一个题目 id 列表 + 记录表，推断出「已作答」的 id 集合 */
@@ -473,14 +505,18 @@
      */
     var seqSaved = sessionSaved(currentLevel, 'sequential');
     var seqLeft = seqSaved ? countUnanswered(seqSaved) : 0;
+    var seqDone = seqSaved ? seqSaved.list.length - seqLeft : 0;
 
     var seqBtn = el('button', 'mode');
     seqBtn.type = 'button';
     seqBtn.appendChild(el('span', 'mode-name', '顺序模式'));
-    seqBtn.appendChild(el('span', 'mode-desc', seqSaved
-      ? '从上次的位置接着做（第 ' + ((seqSaved.index || 0) + 1) + ' / ' +
-        seqSaved.list.length + ' 题），还剩 ' + seqLeft + ' 题未作答。' +
-        '退出后进度保留，可在练习页清空。'
+    /*
+     * 说明里只报「已作答几题 / 共几题」——这是答题数，不是题号。
+     * 题号会被误读成进度（用户报告过：「第 4 / 683 题」看着像做了 4 题）。
+     */
+    seqBtn.appendChild(el('span', 'mode-desc', seqSaved && seqDone > 0
+      ? '已答 ' + seqDone + ' / ' + seqSaved.list.length +
+        ' 题，还剩 ' + seqLeft + ' 题未作答。会接着上次的位置继续，退出后进度保留。'
       : '按题库编号从第 1 题开始，适合系统过一遍。退出后进度保留。'));
     seqBtn.addEventListener('click', startSequential);
     modes.appendChild(seqBtn);
@@ -726,17 +762,33 @@
     var saved = sessionSaved(currentLevel, 'sequential');
     var pool = questionsForLevel();
     var list = null;
+    var restored = false;
     if (saved) { list = rebuildList(saved.list); }
+    /*
+     * 兜底：顺序模式的列表必须是题库顺序。
+     * 旧数据迁移时若把随机练习的乱序列表错当成顺序进度，
+     * 这里会发现并改回题库顺序——而不是照着乱序出题。
+     * 列表被改回顺序后，原来的位置（index）在题库顺序里没有意义，
+     * 所以一并丢回起点，避免停在一个随机的位置。
+     * 已答集合仍按 id 保留（那些题确实做过了）。
+     */
+    if (list && !isBankOrdered(saved.list, currentLevel)) {
+      list = pool.slice();
+      restored = true;
+    }
     if (!list) {
       // 没有可用的旧进度：从题库顺序开始，并丢弃那条坏进度
       if (saved) { dropSession(currentLevel, 'sequential'); }
       list = pool.slice();
+      restored = true;
     }
 
     session = buildSession('sequential', list, recordsOf(currentLevel));
-    if (saved && saved.index >= 0) {
+    if (saved && !restored && saved.index >= 0) {
       session.index = Math.max(0, Math.min(saved.index, list.length - 1));
-      session.answered = saved.answered || {};
+    }
+    if (saved && saved.answered) {
+      session.answered = saved.answered;
     }
     saveSession();
     renderQuestion();
