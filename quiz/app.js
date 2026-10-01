@@ -624,9 +624,12 @@
       index: 0,
       records: recordsOf(currentLevel),
       /**
-       * 本轮提交过作答的题目 id。用来区分「本轮已作答」与「历史记录」：
-       * 重做模式下题目一律显示为未作答，但记录表里可能有旧值，
-       * 靠这个集合才能正确判断翻页与统计。
+       * 本轮提交过作答的题目 id。
+       *
+       * 一个会话记录表里的「本轮进度」由它决定，而不是由 records 决定：
+       * - records 是跨轮次的累计结果，错题本读的就是它，所以重新练习时
+       *   不能清（清了错题本就空了）；
+       * - answered 只属于本轮，清空它就是「从头开始、全部空白」。
        */
       answered: {}
     };
@@ -643,7 +646,7 @@
     saveStore(store);
   }
 
-  /** 从头开始一轮练习：题目一律未作答，可正常作答 */
+  /** 从头开始一轮练习：本轮答题卡与进度全部清空，题目可正常作答 */
   function startSession(order) {
     var pool = questionsForLevel();
     var list = order === 'random' ? shuffled(pool) : pool.slice();
@@ -696,7 +699,8 @@
 
   /** 本轮是否还有未作答的题 */
   function hasUnansweredInSession() {
-    return sessionAnsweredCount() < session.list.length;
+    var p = sessionProgress();
+    return p.done < p.total;
   }
 
   /** 第一道未作答的题的下标，全部答完则返回 -1 */
@@ -712,7 +716,7 @@
    *
    * 允许答题卡自由跳题之后，判断条件不能再是「当前下标是否超过 frontier」：
    * 直接跳到第 500 题作答时，500 远在 frontier 之后，那样会被锁住。
-   * 现在的规则是——当前题在本轮已作答，或前面还有空题（可以先回头补），
+   * 现在的规则是——当前题在本轮已作答，或本轮还有空题（可以先回头补），
    * 就可以往下翻。
    */
   function canGoNext() {
@@ -723,8 +727,8 @@
 
   function progressText() {
     var st = sessionStats();
-    var done = sessionAnsweredCount();
-    var tail = done > 0 ? ' · 对 ' + st.right + ' 错 ' + st.wrong : '';
+    var p = sessionProgress();
+    var tail = p.done > 0 ? ' · 对 ' + st.right + ' 错 ' + st.wrong : '';
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
@@ -743,15 +747,24 @@
     return !!session.answered[q.id];
   }
 
-  /** 本轮已作答的题数（用于进度与成绩，不受历史记录影响） */
-  function sessionAnsweredCount() {
-    return Object.keys(session.answered).length;
+  /**
+   * 本轮已作答的题数 / 本轮总题数。
+   *
+   * 这是唯一的「本轮进度」来源：答题卡的格子标记、进度数字、
+   * 「下一题」是否可用，全部看它。刻意不读 session.records——
+   * records 是跨轮次的累计（错题本读它），用它会让「重新练习」清不干净。
+   */
+  function sessionProgress() {
+    return { done: Object.keys(session.answered).length, total: session.list.length };
   }
 
-  /** 答题卡头部的统计文案 */
+  /**
+   * 右面板的累计统计：当前级别全部作答结果（含以前各轮）。
+   * 与「练习进度」不同——进度只算本轮，重开一轮会归零，而这个不会。
+   */
   function sheetStatText() {
-    var st = sessionStats();
-    return '对 ' + st.right + ' 错 ' + st.wrong;
+    var st = levelStats(currentLevel);
+    return levelLabel(currentLevel) + '累计　对 ' + st.right + ' 错 ' + st.wrong;
   }
 
   /** 右面板里的一行「名称  值」 */
@@ -762,20 +775,12 @@
     return row;
   }
 
-  /** 题目 id -> 它在当前级别题库里的序号（从 1 开始），用于答题卡编号 */
-  function bankNumbers(level) {
-    var ids = (levels && levels[level]) || [];
-    var map = {};
-    for (var i = 0; i < ids.length; i++) { map[ids[i]] = i + 1; }
-    return map;
-  }
-
   /**
    * 答题卡：把本轮题目排成号码格，点任意格跳到该题。
    *
-   * 格子上的编号是**题库里的原序号**（而不是本轮的第几格）：
-   * 随机练习时能看出抽到了哪些题，也能和错题本里的编号对上。
-   * 跳转用 data-index（本轮内的下标），与编号相互独立。
+   * 格子按**本轮顺序**编号 1..N。随机练习时题目顺序是打乱的，
+   * 但答题卡仍然从 1 排到 N——它表示「本轮第几题」，与题库编号无关。
+   * 跳转用 data-index（本轮内的下标），与显示的编号天然一致。
    *
    * 全部格子都可点——随机挑题练是合理用法，不要求按顺序推进。
    * 但「下一题」仍只在当前题作答过、或前面还有空题时才可用，
@@ -793,33 +798,31 @@
 
     box.appendChild(metaRow('题目编号', q.id));
     /*
-     * 练习进度 = 当前题在本轮里的序位（第几题 / 共几题）。
-     * 参考图上「题目编号 MC2-0001」配「练习进度 2 / 683」，即做到第 2 题。
-     * 注意不是「已答几题」——跳着做题时两者会不一样。
+     * 练习进度 = 本轮**已作答的题数** / 总题数。
+     * 不是当前题号：跳着做题时，做第 24 题仍然只做了 1 题，进度必须是 1。
+     * 重新开始一轮时 answered 被清空，所以这里会回到 0。
      */
     var progressRow = metaRow('练习进度',
-      (session.index + 1) + ' / ' + session.list.length);
+      sessionProgress().done + ' / ' + sessionProgress().total);
     box.appendChild(progressRow);
     var progressVal = progressRow.childNodes[1];
 
     var stat = el('div', 'sheet-stat', sheetStatText());
     box.appendChild(stat);
 
-    var nums = bankNumbers(currentLevel);
-
     var grid = el('div', 'sheet-grid');
     var cells = {};
 
     session.list.forEach(function (item, i) {
-      var rec = session.records[item.id];
+      // 只认本轮：重开一轮后这里的标记全部消失，进度也同时归零
+      var rec = session.answered[item.id] ? session.records[item.id] : null;
       var isCurrent = i === session.index;
-      // 格子上的编号取题库原序号（找不到时退回本轮序位）
-      var no = nums[item.id] || (i + 1);
+      // 编号 = 本轮序位（随机练习下与题库编号无关）
+      var no = i + 1;
 
       var cell = el('button', 'sheet-cell');
       cell.type = 'button';
       cell.setAttribute('data-index', String(i));
-      cell.setAttribute('data-no', String(no));
       cell.textContent = String(no);
 
       if (isCurrent) {
@@ -832,7 +835,7 @@
       }
       // 全部格子都可点：随机挑题练是合理用法，不再要求按顺序推进。
 
-      var label = '题库第 ' + no + ' 题';
+      var label = '本轮第 ' + no + ' 题';
       label += rec ? (rec.correct ? '，已答对' : '，已答错') : '，未作答';
       if (isCurrent) { label += '（当前）'; }
       cell.setAttribute('aria-label', label);
@@ -861,16 +864,16 @@
       /** 作答或翻页后刷新状态，避免整块重绘 */
       update: function () {
         stat.textContent = sheetStatText();
-        progressVal.textContent = (session.index + 1) + ' / ' + session.list.length;
+        progressVal.textContent = sessionProgress().done + ' / ' + sessionProgress().total;
         for (var id in cells) {
           if (!Object.prototype.hasOwnProperty.call(cells, id)) { continue; }
           var cell = cells[id];
-          var rec = session.records[id];
+          // 同样只认本轮
+          var rec = session.answered[id] ? session.records[id] : null;
           var i = Number(cell.getAttribute('data-index'));
-          var no = cell.getAttribute('data-no');
           cell.classList.remove('is-current', 'is-right', 'is-wrong');
           delete cell.attributes['data-answered'];
-          var label = '题库第 ' + no + ' 题';
+          var label = '本轮第 ' + (i + 1) + ' 题';
           if (i === session.index) {
             cell.classList.add('is-current');
             cell.setAttribute('aria-current', 'true');
