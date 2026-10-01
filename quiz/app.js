@@ -310,7 +310,7 @@
     seqBtn.appendChild(el('span', 'mode-name', canResume ? '重新顺序练习' : '顺序练习'));
     seqBtn.appendChild(el('span', 'mode-desc',
       '按题库编号从第 1 题开始，适合系统过一遍。' +
-      (canResume ? '会清空当前进度，已记录的作答结果保留。' : '')));
+      (canResume ? '会从头开始，题目为未作答状态。' : '')));
     seqBtn.addEventListener('click', function () { startSession('sequential'); });
     modes.appendChild(seqBtn);
 
@@ -319,7 +319,7 @@
     rndBtn.appendChild(el('span', 'mode-name', canResume ? '重新随机练习' : '随机练习'));
     rndBtn.appendChild(el('span', 'mode-desc',
       '每轮把全部 ' + pool.length + ' 题打乱，适合检验掌握程度。' +
-      (canResume ? '会清空当前进度，已记录的作答结果保留。' : '')));
+      (canResume ? '会从头开始，题目为未作答状态。' : '')));
     rndBtn.addEventListener('click', function () { startSession('random'); });
     modes.appendChild(rndBtn);
 
@@ -508,8 +508,30 @@
 
   // ---------------------------------------------------------------- 练习流程
 
+  /**
+   * 会话模式决定「已有的作答记录要不要显示」：
+   *
+   * - `resume`：继续上次练习。已答的题显示当时的判定（只读），可前后翻看。
+   * - `redo`  ：重做（错题本「全部重做」/「重新顺序练习」/「重新随机练习」）。
+   *             题目一律以**未作答**呈现，可以重新选择与提交；
+   *             提交后的结果覆盖存储里的旧记录。
+   *
+   * 之前所有入口都复用同一份记录，导致「全部重做」一进去就是已作答状态、
+   * 选项预选且不可改，等于没法重做。
+   */
+  function buildSession(mode, order, list) {
+    return {
+      mode: mode,
+      order: order,
+      list: list,
+      index: 0,
+      records: recordsOf(LEVEL)
+    };
+  }
+
   function saveLevelState() {
     store.levels[LEVEL] = {
+      mode: session.mode,
       order: session.order,
       list: session.list.map(function (q) { return q.id; }),
       index: session.index,
@@ -518,21 +540,16 @@
     saveStore(store);
   }
 
+  /** 从头开始一轮练习：题目一律未作答，可正常作答 */
   function startSession(order) {
     var pool = questionsForLevel();
     var list = order === 'random' ? shuffled(pool) : pool.slice();
-    var prev = recordsOf(LEVEL);   // 已答题的结果跨轮次保留
-    session = {
-      order: order,
-      list: list,
-      index: 0,
-      records: prev
-    };
+    session = buildSession('redo', order, list);
     saveLevelState();
     renderQuestion();
   }
 
-  /** 按本地保存的顺序与位置恢复上次的练习 */
+  /** 按本地保存的顺序与位置恢复上次的练习（已答题只读回看） */
   function resumeSession() {
     var saved = store.levels[LEVEL];
     var list = [];
@@ -544,12 +561,17 @@
       renderImportResult('本地保存的记录与当前题库对不上（题目 id 全部找不到），已改为重新开始。', true);
       return;
     }
-    session = {
-      order: saved.order === 'random' ? 'random' : 'sequential',
-      list: list,
-      index: Math.max(0, Math.min(saved.index || 0, list.length - 1)),
-      records: saved.records || {}
-    };
+    session = buildSession('resume', saved.order === 'random' ? 'random' : 'sequential', list);
+    session.index = Math.max(0, Math.min(saved.index || 0, list.length - 1));
+
+    // 更符合直觉：接着往下练，落到第一道未答题。
+    // 存储里的 index 有可能指向已作答的题（例如旧版本保存的位置）。
+    var next = -1;
+    for (var j = 0; j < list.length; j++) {
+      if (!session.records[list[j].id]) { next = j; break; }
+    }
+    if (next !== -1) { session.index = next; }
+
     renderQuestion();
   }
 
@@ -599,16 +621,27 @@
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
+  /** redo 模式下不显示已有记录：题目一律当作未作答，可以重新选择与提交 */
+  function showsRecords() {
+    return session.mode !== 'redo';
+  }
+
+  /** 是否处于「重做」模式：允许重新作答并覆盖旧记录 */
+  function isRedo() {
+    return session.mode === 'redo';
+  }
+
   function renderQuestion() {
     var q = currentQuestion();
-    var record = session.records[q.id] || null;
+    var record = (showsRecords() ? session.records[q.id] : null) || null;
     var isMulti = q.answers.length > 1;
 
     var card = el('section', 'card');
     card.setAttribute('data-qid', q.id);
     card.setAttribute('data-type', isMulti ? 'multiple' : 'single');
     card.setAttribute('data-state', record ? 'answered' : 'fresh');
-    // 便于诊断「重做后仍显示已选」这类问题：明确标出记录是否存在
+    card.setAttribute('data-mode', session.mode);
+    // 便于诊断「重做后仍显示已选」这类问题：明确标出渲染时是否带着记录
     card.setAttribute('data-record', record ? 'yes' : 'no');
 
     // 进度行
@@ -700,9 +733,20 @@
       verdictSlot.appendChild(verdict);
     }
 
+    /**
+     * 刷新翻页按钮。两种模式的前进规则不同：
+     * - 有记录模式（resume）：只能前进到「第一道未答题」，作答前不能跳过。
+     * - redo 模式：整轮都是未作答，前进不受已答记录限制，但未提交前仍不可跳过，
+     *   否则一进来就能随便翻。
+     */
     function refreshNav() {
       prevBtn.disabled = session.index === 0;
-      nextBtn.disabled = session.index >= maxAllowedIndex();
+      if (session.mode === 'redo') {
+        // 本轮内已提交的题才算已作答
+        nextBtn.disabled = session.index !== lastIndex && !session.records[q.id];
+      } else {
+        nextBtn.disabled = session.index >= maxAllowedIndex();
+      }
       nextBtn.textContent = session.index === lastIndex ? '查看成绩' : '下一题';
     }
 
@@ -714,7 +758,7 @@
       submitBtn.disabled = true;
 
       fieldset.addEventListener('change', function () {
-        if (session.records[q.id]) { return; }
+        if (session.records[q.id] && !isRedo()) { return; }
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
           .map(function (item) { return item.key; });
@@ -725,7 +769,8 @@
       });
 
       submitBtn.addEventListener('click', function () {
-        if (session.records[q.id]) { return; }
+        // 非 redo 模式下，同一题只有第一次提交计入，避免来回改答案刷分
+        if (session.records[q.id] && !isRedo()) { return; }
 
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
@@ -736,7 +781,9 @@
           selected: picked,
           correct: isCorrect(picked, q.answers)
         };
-        saveLevelState();          // 每次作答后立刻落盘
+        // 作答后立刻落盘，并把当前位置一起记下：
+        // 否则「继续练习」会回到上一道未答题，而不是接着往下。
+        saveLevelState();
 
         showVerdict(session.records[q.id]);
         left.textContent = progressText();
@@ -881,7 +928,7 @@
     }
   }
 
-  /** 用错题组成一轮练习（顺序与题库一致） */
+  /** 用错题组成一轮练习（顺序与题库一致），全部以未作答呈现 */
   function startRedoSession(ids) {
     var list = [];
     for (var i = 0; i < ids.length; i++) {
@@ -889,12 +936,7 @@
       if (q) { list.push(q); }
     }
     if (list.length === 0) { renderNotebook(); return; }
-    session = {
-      order: 'sequential',
-      list: list,
-      index: 0,
-      records: recordsOf(LEVEL)   // 同一份记录，重做会覆盖对应条目
-    };
+    session = buildSession('redo', 'sequential', list);
     saveLevelState();
     renderQuestion();
   }
@@ -904,12 +946,7 @@
     var q = questionsById[id];
     if (!q) { renderNotebook(); return; }
     delete recordsOf(LEVEL)[id];
-    session = {
-      order: 'sequential',
-      list: [q],
-      index: 0,
-      records: recordsOf(LEVEL)
-    };
+    session = buildSession('redo', 'sequential', [q]);
     saveLevelState();
     renderQuestion();
   }
