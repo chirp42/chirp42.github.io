@@ -1,4 +1,4 @@
-/* 业余无线电操作证模拟练习
+/* 业余无线电操作资格模拟考试
  *
  * 数据来自 ../data/questions.json（题池）与 ../data/levels.json（级别映射）。
  * 题目内容与级别归属分离：换题库只换数据，本文件不动。
@@ -417,7 +417,7 @@
   function renderLoading() {
     clear(mainEl);
     var card = el('section', 'card');
-    card.appendChild(el('h1', null, '业余无线电操作证 · 模拟练习'));
+    card.appendChild(el('h1', null, '业余无线电操作资格模拟考试'));
     card.appendChild(el('p', 'note', '正在载入题库…'));
     mainEl.appendChild(card);
   }
@@ -450,7 +450,6 @@
     box.setAttribute('aria-label', '选择级别');
 
     availableLevels().forEach(function (lv) {
-      var st = levelStats(lv);
       var total = (levels[lv] || []).length;
       var isCurrent = lv === currentLevel;
 
@@ -459,8 +458,8 @@
       b.setAttribute('data-level', lv);
       b.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
       b.appendChild(el('span', 'level-name', levelLabel(lv)));
-      b.appendChild(el('span', 'level-meta',
-        total + ' 题' + (st.done > 0 ? ' · 已答 ' + st.done : '')));
+      // 只报题量。各人进度不同，写在级别按钮上既挤又容易和下方统计重复。
+      b.appendChild(el('span', 'level-meta', total + ' 题'));
       if (isCurrent) { b.disabled = true; }
       b.addEventListener('click', function () { setLevel(lv); });
       box.appendChild(b);
@@ -476,7 +475,7 @@
     var wrongCount = wrongIdsOf(currentLevel).length;
 
     var card = el('section', 'card');
-    card.appendChild(el('h1', null, '业余无线电操作证 · 模拟练习'));
+    card.appendChild(el('h1', null, '业余无线电操作资格模拟考试'));
     card.appendChild(renderLevelPicker());
     card.appendChild(el('p', 'note',
       '当前 ' + levelLabel(currentLevel) + ' 题库共 ' + pool.length + ' 题。' +
@@ -548,8 +547,7 @@
     mainEl.appendChild(card);
 
     if (footEl) {
-      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版' +
-        ' · 错题 ' + wrongCount + versionSuffix();
+      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版' + versionSuffix();
     }
   }
 
@@ -1219,10 +1217,10 @@
 
     var sheetOpen = false;
 
-    /** 浮动按钮上的文字：显示已答题数，兼作进度提示 */
+    /** 浮动按钮上的文字：题号 + 已答进度（收起时也能看到正在做哪道题） */
     function sheetFabLabel() {
       var p = sessionProgress();
-      return '答题卡 ' + p.done + '/' + p.total;
+      return currentQuestion().id + ' · ' + p.done + '/' + p.total;
     }
 
     /** 展开 / 收起答题卡浮动面板（宽屏下由 CSS 忽略这个状态） */
@@ -1392,7 +1390,8 @@
     window.scrollTo(0, 0);
 
     if (footEl) {
-      footEl.textContent = '记录已保存在本机 · 错题 ' + wrongCount + versionSuffix();
+      /* 页脚保持同一形态：只报与当前页面最相关的信息 + 版本号。 */
+      footEl.textContent = '练习记录保存在本机' + versionSuffix();
     }
   }
 
@@ -1415,7 +1414,7 @@
       card.appendChild(el('p', 'note', '暂时没有错题。'));
       card.appendChild(button('返回首页', 'btn-primary', renderHome));
       mainEl.appendChild(card);
-      if (footEl) { footEl.textContent = '错题 0' + versionSuffix(); }
+      if (footEl) { footEl.textContent = '错题本' + versionSuffix(); }
       return;
     }
 
@@ -1444,7 +1443,7 @@
     mainEl.appendChild(card);
 
     if (footEl) {
-      footEl.textContent = '错题 ' + wrongIds.length + versionSuffix();
+      footEl.textContent = '错题本 · ' + wrongIds.length + ' 道' + versionSuffix();
     }
   }
 

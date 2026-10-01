@@ -1,4 +1,4 @@
-/* 业余无线电操作证模拟练习 —— 移动端优先，无构建 */
+/* 业余无线电操作资格模拟考试 —— 移动端优先，无构建 */
 
 /*
  * 设计令牌。颜色与字号只在这里定义，别处一律引用变量：
@@ -761,4 +761,50 @@ h1 {
 
   /* 打开面板时锁住背景滚动 */
   body.sheet-locked { overflow: hidden; }
+}
+
+/* ---------------- 矮窗口：压缩纵向间距，尽量一屏放下 ---------------- */
+
+/*
+ * 目标：常见窗口高度下不用滚动就能看完一页。
+ * 这里按**高度**加规则而不是按宽度——溢出主要发生在横屏手机和笔记本
+ * 矮窗口上，那些情况下宽度其实很充裕。
+ */
+@media (max-height: 52rem) {
+  .card { padding: 1rem 1.25rem; }
+
+  h1 { font-size: var(--text-lg); margin-bottom: .5rem; }
+
+  .levels { margin-bottom: .6rem; }
+  .level { padding: .45rem .6rem; }
+
+  .modes { gap: .5rem; margin-top: .85rem; }
+  .mode { padding: .7rem .9rem; }
+  .mode-desc { font-size: var(--text-xs); }
+
+  /* 数据管理块：说明文字在矮窗口里最不必要，收掉 */
+  .datatools { margin-top: .85rem; padding-top: .85rem; }
+  .datatools > .note { display: none; }
+  .actions { margin-top: .85rem; }
+  .btn { min-height: 46px; }
+
+  /* 练习页：选项更紧凑，让题干、选项、按钮尽量同屏 */
+  .options { gap: .5rem; }
+  .opt { min-height: 46px; padding: .6rem .8rem; }
+  .qtext { margin-bottom: .8rem; font-size: var(--text-md); }
+  .qtypes { margin-bottom: .4rem; }
+  .progress { margin-bottom: .5rem; }
+  .sheet-grid { max-height: 15rem; }
+}
+
+/* 极矮窗口（如横屏手机）：进一步压缩 */
+@media (max-height: 34rem) {
+  .card { padding: .75rem .9rem; }
+  h1 { font-size: var(--text-md); }
+  .level { min-height: 40px; padding: .35rem .5rem; }
+  .mode { padding: .55rem .8rem; }
+  .opt { min-height: 40px; padding: .5rem .7rem; }
+  .qtext { font-size: var(--text-base); margin-bottom: .6rem; }
+  .actions { margin-top: .6rem; }
+  .btn { min-height: 42px; font-size: var(--text-base); }
 }
