@@ -146,9 +146,22 @@
     }
   }
 
+  /**
+   * 取某级别的作答记录表，**保证返回 store 里的那一份引用**。
+   *
+   * 不能写成「没有就返回 {}」——那是取值器返回临时对象，调用方
+   * `delete recordsOf(LEVEL)[id]` 会删在一个立刻被丢弃的对象上，
+   * 记录其实没删掉，界面又因为读的是同一份临时对象而显示为未作答，
+   * 结果就是「重做后仍显示已选选项」。所以这里缺什么就补什么，
+   * 并让它成为 store 的一部分。
+   */
   function recordsOf(level) {
-    var lv = store.levels[level];
-    return (lv && lv.records) ? lv.records : {};
+    if (!store.levels) { store.levels = {}; }
+    if (!store.levels[level]) {
+      store.levels[level] = { order: 'sequential', list: [], index: 0, records: {} };
+    }
+    if (!store.levels[level].records) { store.levels[level].records = {}; }
+    return store.levels[level].records;
   }
 
   /** 某级别已存在的作答统计 */
@@ -595,6 +608,8 @@
     card.setAttribute('data-qid', q.id);
     card.setAttribute('data-type', isMulti ? 'multiple' : 'single');
     card.setAttribute('data-state', record ? 'answered' : 'fresh');
+    // 便于诊断「重做后仍显示已选」这类问题：明确标出记录是否存在
+    card.setAttribute('data-record', record ? 'yes' : 'no');
 
     // 进度行
     var bar = el('div', 'progress');
