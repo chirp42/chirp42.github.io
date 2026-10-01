@@ -709,6 +709,123 @@
     return session.mode === 'redo';
   }
 
+  /** 某道题是否已提交过作答（按当前级别的记录表） */
+  function isAnswered(q) {
+    return !!session.records[q.id];
+  }
+
+  /**
+   * 答题卡：把本轮题目按顺序排成号码格，点已答的格可跳到该题。
+   *
+   * 跳转规则与「上一题 / 下一题」保持一致——**不能跳过未作答的题**，
+   * 所以未答的格子是禁用状态。这样将来做模拟考试、允许自由跳转时，
+   * 只需把这里的禁用条件放开，不必改结构。
+   *
+   * 题量大时（B 级 1143、C 级 1282）表格可滚动，且只渲染号码与状态，
+   * 不渲染题干，开销很小。
+   */
+  function renderAnswerSheet() {
+    var box = el('section', 'sheet');
+    box.setAttribute('data-sheet', 'grid');
+
+    var head = el('div', 'sheet-head');
+    var title = el('span', 'sheet-title', '答题卡');
+    var stat = el('span', 'sheet-stat',
+      '对 ' + sessionStats().right + ' 错 ' + sessionStats().wrong +
+      ' · ' + (session.index + 1) + '/' + session.list.length);
+    head.appendChild(title);
+    head.appendChild(stat);
+    box.appendChild(head);
+
+    var grid = el('div', 'sheet-grid');
+    var cells = {};
+
+    session.list.forEach(function (item, i) {
+      var rec = session.records[item.id];
+      var isCurrent = i === session.index;
+
+      var cell = el('button', 'sheet-cell');
+      cell.type = 'button';
+      cell.setAttribute('data-index', String(i));
+      cell.textContent = String(i + 1);
+
+      if (isCurrent) {
+        cell.classList.add('is-current');
+        cell.setAttribute('aria-current', 'true');
+      }
+      if (rec) {
+        cell.classList.add(rec.correct ? 'is-right' : 'is-wrong');
+        cell.setAttribute('data-answered', 'yes');
+      } else if (!isCurrent) {
+        // 与翻页按钮同一条规则：未作答的题不允许跳过。
+        // 当前题本身不禁用——否则整块答题卡看起来都是灰的，像不能点。
+        cell.disabled = true;
+      }
+
+      var label = '第 ' + (i + 1) + ' 题';
+      if (rec) {
+        label += rec.correct ? '，已答对' : '，已答错';
+      } else {
+        label += '，未作答，不可跳转';
+      }
+      cell.setAttribute('aria-label', label);
+
+      cells[item.id] = cell;
+      grid.appendChild(cell);
+    });
+
+    // 事件委托：一个监听器覆盖全部格子
+    grid.addEventListener('click', function (ev) {
+      var target = ev.target;
+      if (!target || !target.getAttribute) { return; }
+      var idx = target.getAttribute('data-index');
+      if (idx === null || idx === undefined) { return; }
+      if (target.disabled) { return; }
+      var i = Number(idx);
+      if (!(i >= 0) || i >= session.list.length || i === session.index) { return; }
+      session.index = i;
+      saveLevelState();
+      renderQuestion();
+    });
+
+    box.appendChild(grid);
+
+    return {
+      node: box,
+      /** 作答或翻页后刷新状态，避免整块重绘 */
+      update: function () {
+        var st = sessionStats();
+        stat.textContent = '对 ' + st.right + ' 错 ' + st.wrong +
+          ' · ' + (session.index + 1) + '/' + session.list.length;
+        for (var id in cells) {
+          if (!Object.prototype.hasOwnProperty.call(cells, id)) { continue; }
+          var cell = cells[id];
+          var rec = session.records[id];
+          var i = Number(cell.getAttribute('data-index'));
+          cell.classList.remove('is-current', 'is-right', 'is-wrong');
+          delete cell.attributes['data-answered'];
+          if (i === session.index) {
+            cell.classList.add('is-current');
+            cell.setAttribute('aria-current', 'true');
+          } else {
+            delete cell.attributes['aria-current'];
+          }
+          if (rec) {
+            cell.classList.add(rec.correct ? 'is-right' : 'is-wrong');
+            cell.setAttribute('data-answered', 'yes');
+            cell.disabled = false;
+            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 题，已答' +
+              (rec.correct ? '对' : '错'));
+          } else {
+            cell.disabled = i !== session.index;
+            cell.setAttribute('aria-label', '第 ' + (i + 1) + ' 题，未作答' +
+              (i === session.index ? '（当前）' : '，不可跳转'));
+          }
+        }
+      }
+    };
+    }
+
   function renderQuestion() {
     var q = currentQuestion();
     var record = (showsRecords() ? session.records[q.id] : null) || null;
@@ -779,6 +896,10 @@
     actions.appendChild(submitBtn);
     actions.appendChild(nextBtn);
     card.appendChild(actions);
+
+    // 答题卡：题量大时表格自身滚动，不挤压题目区。
+    var sheet = renderAnswerSheet();
+    card.appendChild(sheet.node);
 
     var lastIndex = session.list.length - 1;
 
@@ -865,6 +986,7 @@
 
         showVerdict(session.records[q.id]);
         left.textContent = progressText();
+        sheet.update();
         submitBtn.hidden = true;
         refreshNav();
         if (!nextBtn.disabled) { nextBtn.focus(); }
