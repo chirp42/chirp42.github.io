@@ -1,5 +1,10 @@
 /* 业余无线电操作证模拟练习 —— 移动端优先，无构建 */
 
+/*
+ * 设计令牌。颜色与字号只在这里定义，别处一律引用变量：
+ * 之前散落着 13 种字号取值（含 .8125 / 1.0625 这类 1/16 碎值）和 5 个
+ * 硬编码颜色，改一处要翻遍全文，深色模式也容易漏。
+ */
 :root {
   --bg: #f6f7f9;
   --fg: #1c1e21;
@@ -12,7 +17,23 @@
   --ok-soft: #e8f6ec;
   --bad: #b91c1c;
   --bad-soft: #fdeaea;
+  /* 答题卡「当前题」的强调色（黄圈）。与对错色系不冲突。 */
+  --spot: #d9a300;
+  /* 主按钮上的文字色 */
+  --on-accent: #fff;
+
   --radius: 12px;
+  --radius-sm: 10px;
+
+  /* 字号尺度：6 档，全部走变量 */
+  --text-xs: .8125rem;   /* 13px 标签、角标 */
+  --text-sm: .875rem;    /* 14px 说明、次要信息 */
+  --text-base: 1rem;     /* 16px 信息行 */
+  --text-md: 1.0625rem;  /* 17px 选项字母、按钮 */
+  --text-lg: 1.25rem;    /* 20px 题干 */
+  --text-xl: 1.4rem;     /* 标题（配合 clamp 放大） */
+
+  /* 布局断点数值（仅供注释参考，媒体查询里必须写字面量） */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +49,8 @@
     --ok-soft: #1d3327;
     --bad: #fca5a5;
     --bad-soft: #3a2222;
+    --spot: #f2c94c;
+    --on-accent: #10131a;
   }
 }
 
@@ -70,7 +93,7 @@ body {
 
 .topbar-title {
   color: var(--muted);
-  font-size: .9rem;
+  font-size: var(--text-sm);
 }
 
 .footbar {
@@ -79,7 +102,7 @@ body {
   border-top: 1px solid var(--line);
   background: var(--card);
   color: var(--muted);
-  font-size: .8rem;
+  font-size: var(--text-xs);
   text-align: center;
 }
 
@@ -107,7 +130,7 @@ body {
 
 h1 {
   margin: 0 0 .75rem;
-  font-size: clamp(1.4rem, 5vw, 1.9rem);
+  font-size: clamp(var(--text-xl), 5vw, 1.9rem);
   line-height: 1.35;
 }
 
@@ -135,7 +158,7 @@ h1 {
   min-height: 48px;
   padding: .6rem .75rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--fg);
   font: inherit;
@@ -159,7 +182,7 @@ h1 {
 .level-name { font-weight: 600; }
 
 .level-meta {
-  font-size: .75rem;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
@@ -171,9 +194,9 @@ h1 {
   justify-content: center;
   min-height: 54px;
   padding: .7rem 1.5rem;
-  font-size: 1.0625rem;
+  font-size: var(--text-md);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--fg);
   font: inherit;
@@ -196,7 +219,7 @@ h1 {
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
@@ -207,7 +230,7 @@ h1 {
 .btn-small {
   min-height: 0;
   padding: .2rem .7rem;
-  font-size: .8rem;
+  font-size: var(--text-xs);
 }
 
 /* ---------------- 模式选择 ---------------- */
@@ -243,7 +266,7 @@ h1 {
 .mode-desc {
   display: block;
   color: var(--muted);
-  font-size: .875rem;
+  font-size: var(--text-sm);
   margin-top: .15rem;
 }
 
@@ -268,15 +291,7 @@ h1 {
   .practice { grid-template-columns: minmax(0, 1fr) clamp(24rem, 28vw, 30rem); }
 }
 
-/* 堆叠时答题卡在下方：左侧分隔线改成顶部横线 */
-@media (max-width: 63.999rem) {
-  .sheet {
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding-left: 0;
-    padding-top: 1.25rem;
-  }
-}
+/* 窄屏的答题卡规则集中在文件末尾的「浮动面板」一节，这里不再重复。 */
 
 /* ---------------- 进度与题干 ---------------- */
 
@@ -286,7 +301,7 @@ h1 {
   justify-content: space-between;
   gap: .5rem;
   color: var(--muted);
-  font-size: .875rem;
+  font-size: var(--text-sm);
   margin-bottom: .75rem;
 }
 
@@ -325,7 +340,7 @@ h1 {
 
 .qtext {
   margin: 0 0 1.1rem;
-  font-size: 1.25rem;
+  font-size: var(--text-lg);
   line-height: 1.8;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -333,7 +348,7 @@ h1 {
 
 .qtype {
   display: inline-block;
-  font-size: .8125rem;
+  font-size: var(--text-xs);
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -358,7 +373,7 @@ h1 {
   min-height: 56px;
   padding: .9rem 1.05rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--card);
   cursor: pointer;
 }
@@ -378,7 +393,7 @@ h1 {
   font-weight: 600;
   color: var(--muted);
   min-width: 1.25rem;
-  font-size: 1.0625rem;
+  font-size: var(--text-md);
 }
 
 .opt-text {
@@ -411,7 +426,7 @@ h1 {
 .verdict {
   margin-top: 1rem;
   padding: .85rem 1rem;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   font-weight: 500;
 }
@@ -433,7 +448,7 @@ h1 {
   margin-top: .35rem;
   font-weight: 400;
   color: var(--fg);
-  font-size: .9rem;
+  font-size: var(--text-sm);
 }
 
 .actions {
@@ -471,7 +486,7 @@ h1 {
 
 .summary-val {
   color: var(--muted);
-  font-size: .9rem;
+  font-size: var(--text-sm);
 }
 
 /* ---------------- 答题卡 ---------------- */
@@ -497,8 +512,16 @@ h1 {
 }
 
 .sheet-mode {
-  font-size: 1.2rem;
+  font-size: var(--text-lg);
   font-weight: 700;
+}
+
+/* 标题右侧的按钮组（清空答题 / 收起） */
+.sheet-head-btns {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex: none;
 }
 
 /* 名称 + 值 的信息行 */
@@ -508,7 +531,7 @@ h1 {
   gap: .5rem;
   align-items: baseline;
   margin-bottom: .45rem;
-  font-size: 1rem;
+  font-size: var(--text-base);
 }
 
 .meta-name { color: var(--muted); }
@@ -522,7 +545,7 @@ h1 {
 
 .sheet-stat {
   color: var(--muted);
-  font-size: .9rem;
+  font-size: var(--text-sm);
   margin: .6rem 0 .75rem;
 }
 
@@ -534,6 +557,8 @@ h1 {
   max-height: 26rem;
   overflow-y: auto;
   padding-right: .15rem;
+  /* 格子里的数字字号：随格子宽度缩放，最多四位也放得下 */
+  --cell-text: clamp(.72rem, 1.1vw, .9rem);
 }
 
 .sheet-cell {
@@ -548,10 +573,10 @@ h1 {
   color: var(--fg);
   font: inherit;
   /*
-   * 格子里是题库原序号，最多三位数（C 级 1282）。
-   * 字号用 clamp 跟着格子宽度走，三位数也放得下。
+   * 格子里是本轮序号（1..N，最多四位）。字号跟着格子宽度走，
+   * 位数多时也能放得下。
    */
-  font-size: clamp(.72rem, 1.1vw, .95rem);
+  font-size: var(--cell-text, .9rem);
   font-variant-numeric: tabular-nums;
   line-height: 1;
   cursor: pointer;
@@ -589,24 +614,14 @@ h1 {
 
 /* 当前题：黄圈，与对错色不冲突。点它等于原地不动，所以指针用默认。 */
 .sheet-cell.is-current {
-  border-color: #d9a300;
-  box-shadow: inset 0 0 0 1px #d9a300;
+  border-color: var(--spot);
+  box-shadow: inset 0 0 0 1px var(--spot);
   cursor: default;
-}
-
-@media (prefers-color-scheme: dark) {
-  .sheet-cell.is-current { border-color: #f2c94c; box-shadow: inset 0 0 0 1px #f2c94c; }
 }
 
 .sheet-cell:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-/* 窄屏放不下数字时只留色块，仍可点 */
-@media (max-width: 26rem) {
-  .sheet-grid { grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr)); }
-  .sheet-cell { font-size: 0; }
 }
 
 /* ---------------- 数据管理（导出 / 导入 / 清空） ---------------- */
@@ -622,9 +637,9 @@ h1 {
   margin: 1rem 0 0;
   padding: .7rem .9rem;
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
-  font-size: .9rem;
+  font-size: var(--text-sm);
 }
 
 .notice.error {
@@ -644,7 +659,7 @@ h1 {
 .nb-item {
   padding: .85rem .95rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--card);
 }
 
@@ -656,15 +671,94 @@ h1 {
 
 .nb-item .note {
   margin: 0 0 .6rem;
-  font-size: .8rem;
+  font-size: var(--text-xs);
+}
+
+/* ---------------- 窄屏：答题卡改为浮动面板 + 右下角唤出按钮 ---------------- */
+
+/*
+ * 手机上答题卡竖排堆在题目下方太高（最多 1282 个格子），改为：
+ * 默认收起 → 右下角浮动按钮唤出 → 盖在内容上的浮动面板 → 再点收起。
+ * 宽屏（>= 64rem）不受影响，右栏常驻显示。
+ */
+
+/* 唤出按钮与「收起」按钮：默认隐藏，只在窄屏的练习页出现 */
+.sheet-fab { display: none; }
+.sheet-close { display: none; }
+
+/* 背景遮罩：点空白处也收起 */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, .35);
+  display: none;
 }
 
 /* 底部悬浮操作条，便于单手操作 */
-@media (max-width: 30rem) {
+@media (max-width: 34rem) {
   .actions {
     position: sticky;
     bottom: 0;
     padding: .6rem 0 calc(.6rem + env(safe-area-inset-bottom));
     background: linear-gradient(to top, var(--card) 70%, transparent);
   }
+
+  /* 极窄屏放不下数字时只留色块，仍可点 */
+  .sheet-cell { font-size: 0; }
+}
+
+@media (max-width: 63.999rem) {
+  /* 窄屏时答题卡不再是右栏的一部分，收起/展开全部由浮动面板规则接管 */
+
+  .card.has-sheet .sheet-fab {
+    display: inline-flex;
+    position: fixed;
+    right: 1rem;
+    bottom: calc(1rem + env(safe-area-inset-bottom));
+    z-index: 25;
+    min-height: 52px;
+    padding: 0 1.1rem;
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+  }
+
+  /* 收起时答题卡不占位 */
+  .card.has-sheet .sheet { display: none; }
+
+  /* 展开：盖在内容上的浮动面板 */
+  .card.has-sheet.is-sheet-open .sheet {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    max-height: 72vh;
+    overflow-y: auto;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+    background: var(--card);
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, .22);
+  }
+
+  .card.has-sheet.is-sheet-open .sheet-backdrop { display: block; }
+
+  /* 面板里标题吸顶，滚动时也能点到「收起」 */
+  .card.has-sheet.is-sheet-open .sheet-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--card);
+  }
+
+  .card.has-sheet.is-sheet-open .sheet-close { display: inline-flex; }
+
+  /* 面板自身滚动，格子高度不再另外受限 */
+  .card.has-sheet.is-sheet-open .sheet-grid { max-height: none; }
+
+  /* 打开面板时锁住背景滚动 */
+  body.sheet-locked { overflow: hidden; }
 }

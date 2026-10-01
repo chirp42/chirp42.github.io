@@ -879,6 +879,21 @@
     return session.mode === 'random';
   }
 
+  /**
+   * 当前视口是否窄到需要把答题卡收进浮动面板。
+   * 阈值与 CSS 里 64rem 的分栏断点一致（改一处要同时改另一处）。
+   * 环境不支持 matchMedia（老浏览器 / 测试桩）时按「宽屏」处理，
+   * 这样答题卡照常显示，不会误收起。
+   */
+  function isNarrowForSheet() {
+    try {
+      if (typeof window.matchMedia !== 'function') { return false; }
+      return window.matchMedia('(max-width: 63.99rem)').matches;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /** 某道题是否在**本轮**提交过作答 */
   function isAnsweredThisSession(q) {
     return !!session.answered[q.id];
@@ -926,7 +941,7 @@
    * 题量大时（B 级 1143、C 级 1282）表格可滚动，且只渲染号码与状态，
    * 不渲染题干，开销很小。
    */
-  function renderAnswerSheet(q) {
+  function renderAnswerSheet(q, onCloseSheet) {
     var box = el('section', 'sheet');
     box.setAttribute('data-sheet', 'grid');
 
@@ -936,12 +951,19 @@
     head.appendChild(el('span', 'sheet-mode',
       session.mode === 'redo' ? '错题重做' :
       (isRandomMode() ? '随机模式' : '顺序模式')));
+    var headBtns = el('div', 'sheet-head-btns');
     if (!isRandomMode() && session.mode !== 'redo') {
       var clearBtn = el('button', 'btn btn-small', '清空答题');
       clearBtn.type = 'button';
       clearBtn.addEventListener('click', clearSequentialProgress);
-      head.appendChild(clearBtn);
+      headBtns.appendChild(clearBtn);
     }
+    // 「收起」只在窄屏的浮动面板里出现（宽屏由 CSS 隐藏）
+    var closeBtn = el('button', 'btn btn-small sheet-close', '收起');
+    closeBtn.type = 'button';
+    closeBtn.addEventListener('click', function () { onCloseSheet(); });
+    headBtns.appendChild(closeBtn);
+    head.appendChild(headBtns);
     box.appendChild(head);
 
     box.appendChild(metaRow('题目编号', q.id));
@@ -1130,9 +1152,30 @@
     qside.appendChild(qrow);
     qside.appendChild(qbody);
 
-    var sheet = renderAnswerSheet(q);
+    var sheet = renderAnswerSheet(q, function () { setSheetOpen(false); });
     wrap.appendChild(sheet.node);
+
+    /*
+     * 窄屏上把答题卡收进右下角的浮动按钮里。
+     * 题目区上方放一个遮罩 + 卡片本身的 is-sheet-open 状态，
+     * 具体显示与否交给 CSS 的媒体查询判断（宽屏右栏常驻，按钮不出现）。
+     */
+    var backdrop = el('div', 'sheet-backdrop');
+    backdrop.setAttribute('aria-hidden', 'true');
+    card.appendChild(backdrop);
+
+    var fab = el('button', 'btn btn-primary sheet-fab', sheetFabLabel());
+    fab.type = 'button';
+    fab.setAttribute('aria-expanded', 'false');
+    fab.setAttribute('aria-label', '查看答题卡');
+    fab.addEventListener('click', function () { setSheetOpen(!sheetOpen); });
+
+    wrap.appendChild(fab);
     card.appendChild(wrap);
+
+    // 卡片上的标记：CSS 靠它决定窄屏是否收起答题卡
+    card.classList.add('has-sheet');
+    setSheetOpen(false);
 
     var lastIndex = session.list.length - 1;
 
@@ -1172,6 +1215,32 @@
       nextBtn.textContent = session.index === lastIndex ? '查看成绩' : '下一题';
     }
 
+    /* ---------- 窄屏答题卡浮动面板 ---------- */
+
+    var sheetOpen = false;
+
+    /** 浮动按钮上的文字：显示已答题数，兼作进度提示 */
+    function sheetFabLabel() {
+      var p = sessionProgress();
+      return '答题卡 ' + p.done + '/' + p.total;
+    }
+
+    /** 展开 / 收起答题卡浮动面板（宽屏下由 CSS 忽略这个状态） */
+    function setSheetOpen(open) {
+      sheetOpen = open;
+      if (open) { card.classList.add('is-sheet-open'); }
+      else { card.classList.remove('is-sheet-open'); }
+      fab.textContent = sheetFabLabel();
+      fab.setAttribute('aria-expanded', open ? 'true' : 'false');
+      fab.setAttribute('aria-label', open ? '收起答题卡' : '查看答题卡');
+      if (document.body && document.body.classList) {
+        if (open && isNarrowForSheet()) { document.body.classList.add('sheet-locked'); }
+        else { document.body.classList.remove('sheet-locked'); }
+      }
+    }
+
+    backdrop.addEventListener('click', function () { setSheetOpen(false); });
+
     if (record) {
       showVerdict(record);
       submitBtn.hidden = true;
@@ -1207,6 +1276,7 @@
         showVerdict(session.records[q.id]);
         left.textContent = progressText();
         sheet.update();
+        setSheetOpen(sheetOpen);   // 刷新浮动按钮上的已答数
         submitBtn.hidden = true;
         refreshNav();
         if (!nextBtn.disabled) { nextBtn.focus(); }
