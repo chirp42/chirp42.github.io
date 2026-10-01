@@ -54,6 +54,30 @@
     while (node.firstChild) { node.removeChild(node.firstChild); }
   }
 
+  /**
+   * 从自身脚本的 URL 上取版本号（quiz/index.html 里引用的是 app.js?v=x.y.z）。
+   * 这样页脚显示的版本一定等于**正在运行的这份代码**的版本：如果浏览器
+   * 用了缓存的旧 app.js，页脚也会显示旧版本号，不会出现“界面是旧的、
+   * 版本号却是新的”这种误导。
+   */
+  function scriptVersion() {
+    try {
+      var scripts = document.getElementsByTagName('script');
+      for (var i = 0; i < scripts.length; i++) {
+        var src = scripts[i].getAttribute('src') || '';
+        var m = /app\.js\?v=([0-9A-Za-z.\-]+)/.exec(src);
+        if (m) { return m[1]; }
+      }
+    } catch (e) { /* 取不到就不显示版本 */ }
+    return '';
+  }
+
+  var VERSION = scriptVersion();
+
+  function versionSuffix() {
+    return VERSION ? ' · v' + VERSION : '';
+  }
+
   /** 答对判定：所选与答案两个集合完全相等（多选顺序无关） */
   function isCorrect(selected, answers) {
     if (selected.length !== answers.length) { return false; }
@@ -163,7 +187,7 @@
     mainEl.appendChild(card);
 
     if (footEl) {
-      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版';
+      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版' + versionSuffix();
     }
   }
 
