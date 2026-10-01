@@ -746,9 +746,12 @@
    * 题量大时（B 级 1143、C 级 1282）表格可滚动，且只渲染号码与状态，
    * 不渲染题干，开销很小。
    */
-  function renderAnswerSheet() {
+  function renderAnswerSheet(q) {
     var box = el('section', 'sheet');
     box.setAttribute('data-sheet', 'grid');
+
+    // 题目编号放在答题卡上方（原来在进度行显示章节，已去掉）
+    box.appendChild(el('div', 'sheet-qid', '题目编号：' + q.id));
 
     var head = el('div', 'sheet-head');
     var title = el('span', 'sheet-title', '答题卡');
@@ -849,15 +852,13 @@
     // 便于诊断「重做后仍显示已选」这类问题：明确标出渲染时是否带着记录
     card.setAttribute('data-record', record ? 'yes' : 'no');
 
-    // 进度行
+    // 进度行。章节信息不再显示在这里——题目编号改到答题卡上方。
     var bar = el('div', 'progress');
     var left = el('span', null, progressText());
-    var mid = el('span', 'chapter', '章节 ' + q.chapter);
     var quit = el('button', 'btn btn-small', '结束');
     quit.type = 'button';
     quit.addEventListener('click', renderSummary);
     bar.appendChild(left);
-    bar.appendChild(mid);
     bar.appendChild(quit);
     card.appendChild(bar);
 
@@ -906,10 +907,6 @@
     actions.appendChild(submitBtn);
     actions.appendChild(nextBtn);
     card.appendChild(actions);
-
-    // 答题卡：题量大时表格自身滚动，不挤压题目区。
-    var sheet = renderAnswerSheet();
-    card.appendChild(sheet.node);
 
     var lastIndex = session.list.length - 1;
 
@@ -1014,8 +1011,14 @@
       renderQuestion();
     });
 
+    // 题目与答题卡并排：宽屏左右分栏，窄屏自动上下堆叠（见 CSS .practice）
+    var sheet = renderAnswerSheet(q);
+    var wrap = el('div', 'practice');
+    wrap.appendChild(card);
+    wrap.appendChild(sheet.node);
+
     clear(mainEl);
-    mainEl.appendChild(card);
+    mainEl.appendChild(wrap);
     window.scrollTo(0, 0);
   }
 

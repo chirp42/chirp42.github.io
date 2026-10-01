@@ -240,6 +240,24 @@ h1 {
   margin-top: .15rem;
 }
 
+/* ---------------- 练习页布局（题目 + 答题卡） ---------------- */
+
+/*
+ * 宽屏左右分栏；窄屏自动堆叠（grid 只有一列时行为与普通块级一致）。
+ * 用 auto-fit + minmax 而不是媒体查询：答题卡本身需要一个最小宽度才放得下
+ * 号码格，交给浏览器按实际宽度决定分不分栏更稳。
+ */
+.practice {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (min-width: 60rem) {
+  .practice { grid-template-columns: minmax(0, 1fr) 22rem; }
+}
+
 /* ---------------- 进度与题干 ---------------- */
 
 .progress {
@@ -250,10 +268,6 @@ h1 {
   color: var(--muted);
   font-size: .875rem;
   margin-bottom: .75rem;
-}
-
-.chapter {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .qtext {
@@ -408,10 +422,24 @@ h1 {
 
 /* ---------------- 答题卡 ---------------- */
 
+/*
+ * 已从题目卡片内移出，成为并排的独立面板。
+ * 宽屏时随页面滚动（不再用 sticky：答题卡只显示一轮的号码，
+ * 与题目一一对应，钉住反而会遮住下方内容）。
+ */
 .sheet {
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--line);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: clamp(.75rem, 3vw, 1.25rem);
+}
+
+.sheet-qid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .85rem;
+  color: var(--muted);
+  margin-bottom: .6rem;
+  word-break: break-all;
 }
 
 .sheet-head {
@@ -432,9 +460,9 @@ h1 {
 /* 题量大（B 级 1143、C 级 1282）时表格自身滚动，不挤压题目区 */
 .sheet-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2.25rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(2rem, 1fr));
   gap: .35rem;
-  max-height: 13rem;
+  max-height: 22rem;
   overflow-y: auto;
   padding-right: .15rem;
 }
