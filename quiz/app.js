@@ -931,8 +931,8 @@
     var qbody = el('div', 'q-body');
 
     var tags = el('div', 'qtypes');
-    tags.appendChild(el('span', 'qtype',
-      isMulti ? '多选题（' + q.answers.length + ' 个答案）' : '单选题'));
+    // 只标题型，不透露答案个数（那等于变相给提示）
+    tags.appendChild(el('span', 'qtype', isMulti ? '多选题' : '单选题'));
     if (record) {
       tags.appendChild(el('span', 'qtype', '已作答，可前后翻看'));
     }
