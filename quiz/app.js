@@ -190,12 +190,92 @@
    * 并让它成为 store 的一部分。
    */
   function recordsOf(level) {
+    var box = levelBox(level);
+    if (!box.records) { box.records = {}; }
+    return box.records;
+  }
+
+  /**
+   * 取某级别的存储容器，并顺手把 v0.5.8 及更早的扁平结构迁移过来。
+   *
+   * 旧结构：levels.A = { order, list, index, records }
+   *   —— 只有一份进度，所以「随机」和「顺序」会互相覆盖。
+   * 新结构：levels.A = { records, sessions: { sequential, random } }
+   *   —— records 是跨模式的累计（错题本读它）；
+   *      两种模式各存各的进度，互不影响。
+   */
+  function levelBox(level) {
     if (!store.levels) { store.levels = {}; }
-    if (!store.levels[level]) {
-      store.levels[level] = { order: 'sequential', list: [], index: 0, records: {} };
+    if (!store.levels[level]) { store.levels[level] = {}; }
+    var box = store.levels[level];
+    if (!box.records) { box.records = {}; }
+    if (!box.sessions || typeof box.sessions !== 'object') { box.sessions = {}; }
+
+    // 迁移：旧的顶层 list/index 搬到 sessions.sequential
+    if (Array.isArray(box.list)) {
+      if (!box.sessions.sequential) {
+        box.sessions.sequential = {
+          list: box.list,
+          index: typeof box.index === 'number' ? box.index : 0,
+          // 旧版本没有 answered 集合，按现有记录推断本轮已答的题
+          answered: inferAnswered(box.list, box.records)
+        };
+      }
+      delete box.list;
+      delete box.index;
+      delete box.order;
+      delete box.mode;
+      // 迁移结果要立刻落盘：否则内存里是新结构、存储里还是旧的，
+      // 下次启动又要迁移一次（刷新后读到的仍是旧结构）。
+      saveStore(store);
     }
-    if (!store.levels[level].records) { store.levels[level].records = {}; }
-    return store.levels[level].records;
+    return box;
+  }
+
+  /** 从一个题目 id 列表 + 记录表，推断出「已作答」的 id 集合 */
+  function inferAnswered(list, records) {
+    var out = {};
+    for (var i = 0; i < list.length; i++) {
+      if (records && records[list[i]]) { out[list[i]] = true; }
+    }
+    return out;
+  }
+
+  /** 某模式的进度；没有则返回 null */
+  function sessionSaved(level, mode) {
+    var s = levelBox(level).sessions[mode];
+    return (s && Array.isArray(s.list)) ? s : null;
+  }
+
+  /** 把当前会话的进度写到它所属模式的槽位 */
+  function saveSession() {
+    // 'redo'（从错题本进来重做）是临时会话，不占用任何模式槽位，
+    // 否则会把顺序模式的进度覆盖掉
+    if (!session || session.mode === 'redo') { return; }
+    var box = levelBox(currentLevel);
+    box.sessions[session.mode] = {
+      list: session.list.map(function (q) { return q.id; }),
+      index: session.index,
+      answered: session.answered
+    };
+    saveStore(store);
+  }
+
+  /** 丢弃某模式的进度（错题本不受影响） */
+  function dropSession(level, mode) {
+    var box = levelBox(level);
+    delete box.sessions[mode];
+    saveStore(store);
+  }
+
+  /** 某模式保存的进度里还有多少题未作答 */
+  function countUnanswered(saved) {
+    var answered = saved.answered || {};
+    var n = 0;
+    for (var i = 0; i < saved.list.length; i++) {
+      if (!answered[saved.list[i]]) { n++; }
+    }
+    return n;
   }
 
   /** 某级别已存在的作答统计 */
@@ -362,7 +442,6 @@
     var pool = questionsForLevel();
     var stats = levelStats(currentLevel);
     var wrongCount = wrongIdsOf(currentLevel).length;
-    var saved = store.levels[currentLevel];
 
     var card = el('section', 'card');
     card.appendChild(el('h1', null, '业余无线电操作证 · 模拟练习'));
@@ -384,40 +463,35 @@
 
     var modes = el('div', 'modes');
 
-    // 有未完成进度时，主按钮是「继续练习」
-    var resumeIndex = saved ? saved.index : -1;
-    var canResume = saved && Array.isArray(saved.list) && saved.list.length > 0 &&
-      resumeIndex >= 0 && resumeIndex < saved.list.length;
-
-    if (canResume) {
-      var seqLabel = saved.order === 'random' ? '随机' : '顺序';
-      var left = saved.list.length - Object.keys(saved.records || {}).length;
-      var contBtn = el('button', 'mode');
-      contBtn.type = 'button';
-      contBtn.appendChild(el('span', 'mode-name', '继续练习'));
-      contBtn.appendChild(el('span', 'mode-desc',
-        '上次是' + seqLabel + '练习，停在第 ' + (resumeIndex + 1) +
-        ' / ' + saved.list.length + ' 题，还剩 ' + left + ' 题未作答。'));
-      contBtn.addEventListener('click', function () { resumeSession(); });
-      modes.appendChild(contBtn);
-    }
+    /*
+     * 只有两个入口，且文案固定为「顺序模式 / 随机模式」：
+     * - 顺序模式：接着上次做。进度存在 sessions.sequential，退出不清空，
+     *   要清空由练习页的「清空答题」按钮决定。
+     * - 随机模式：每次进入都重新随机并清空上一轮随机记录，所以不需要
+     *   「重新随机练习」这种说法。
+     * 两种模式的错题都记入错题本（records 独立于会话）。
+     */
+    var seqSaved = sessionSaved(currentLevel, 'sequential');
+    var seqLeft = seqSaved ? countUnanswered(seqSaved) : 0;
 
     var seqBtn = el('button', 'mode');
     seqBtn.type = 'button';
-    seqBtn.appendChild(el('span', 'mode-name', canResume ? '重新顺序练习' : '顺序练习'));
-    seqBtn.appendChild(el('span', 'mode-desc',
-      '按题库编号从第 1 题开始，适合系统过一遍。' +
-      (canResume ? '会从头开始，题目为未作答状态。' : '')));
-    seqBtn.addEventListener('click', function () { startSession('sequential'); });
+    seqBtn.appendChild(el('span', 'mode-name', '顺序模式'));
+    seqBtn.appendChild(el('span', 'mode-desc', seqSaved
+      ? '从上次的位置接着做（第 ' + ((seqSaved.index || 0) + 1) + ' / ' +
+        seqSaved.list.length + ' 题），还剩 ' + seqLeft + ' 题未作答。' +
+        '退出后进度保留，可在练习页清空。'
+      : '按题库编号从第 1 题开始，适合系统过一遍。退出后进度保留。'));
+    seqBtn.addEventListener('click', startSequential);
     modes.appendChild(seqBtn);
 
     var rndBtn = el('button', 'mode');
     rndBtn.type = 'button';
-    rndBtn.appendChild(el('span', 'mode-name', canResume ? '重新随机练习' : '随机练习'));
+    rndBtn.appendChild(el('span', 'mode-name', '随机模式'));
     rndBtn.appendChild(el('span', 'mode-desc',
-      '每轮把全部 ' + pool.length + ' 题打乱，适合检验掌握程度。' +
-      (canResume ? '会从头开始，题目为未作答状态。' : '')));
-    rndBtn.addEventListener('click', function () { startSession('random'); });
+      '每轮把全部 ' + pool.length + ' 题打乱。每次进入都重新随机，' +
+      '并清空上一轮随机的作答记录。'));
+    rndBtn.addEventListener('click', startRandom);
     modes.appendChild(rndBtn);
 
     card.appendChild(modes);
@@ -616,68 +690,81 @@
    * 之前所有入口都复用同一份记录，导致「全部重做」一进去就是已作答状态、
    * 选项预选且不可改，等于没法重做。
    */
-  function buildSession(mode, order, list) {
+  function buildSession(mode, list, records) {
     return {
       mode: mode,
-      order: order,
       list: list,
       index: 0,
-      records: recordsOf(currentLevel),
+      records: records,
       /**
-       * 本轮提交过作答的题目 id。
-       *
-       * 一个会话记录表里的「本轮进度」由它决定，而不是由 records 决定：
-       * - records 是跨轮次的累计结果，错题本读的就是它，所以重新练习时
-       *   不能清（清了错题本就空了）；
-       * - answered 只属于本轮，清空它就是「从头开始、全部空白」。
+       * 本轮提交过作答的题目 id。会话的「本轮进度」由它决定：
+       * - 顺序模式退出时把它存进 sessions.sequential，回来继续算数；
+       * - 随机模式每次进入都重建，所以它总是空的。
+       * records 是跨模式累计（错题本读它），两种模式都不清。
        */
       answered: {}
     };
   }
 
-  function saveLevelState() {
-    store.levels[currentLevel] = {
-      mode: session.mode,
-      order: session.order,
-      list: session.list.map(function (q) { return q.id; }),
-      index: session.index,
-      records: session.records
-    };
-    saveStore(store);
+  /**
+   * 用保存的进度重建题目列表。返回 null 表示保存的 id 全部对不上题库。
+   */
+  function rebuildList(savedIds) {
+    var list = [];
+    for (var i = 0; i < savedIds.length; i++) {
+      var q = questionsById[savedIds[i]];
+      if (q) { list.push(q); }
+    }
+    return list.length > 0 ? list : null;
   }
 
-  /** 从头开始一轮练习：本轮答题卡与进度全部清空，题目可正常作答 */
-  function startSession(order) {
+  /**
+   * 顺序模式：接着上一轮的顺序练习做，退出不清空。
+   * 没有保存过（或保存的数据对不上题库）就从第 1 题开始。
+   */
+  function startSequential() {
+    var saved = sessionSaved(currentLevel, 'sequential');
     var pool = questionsForLevel();
-    var list = order === 'random' ? shuffled(pool) : pool.slice();
-    session = buildSession('redo', order, list);
-    saveLevelState();
+    var list = null;
+    if (saved) { list = rebuildList(saved.list); }
+    if (!list) {
+      // 没有可用的旧进度：从题库顺序开始，并丢弃那条坏进度
+      if (saved) { dropSession(currentLevel, 'sequential'); }
+      list = pool.slice();
+    }
+
+    session = buildSession('sequential', list, recordsOf(currentLevel));
+    if (saved && saved.index >= 0) {
+      session.index = Math.max(0, Math.min(saved.index, list.length - 1));
+      session.answered = saved.answered || {};
+    }
+    saveSession();
     renderQuestion();
   }
 
-  /** 按本地保存的顺序与位置恢复上次的练习（已答题只读回看） */
-  function resumeSession() {
-    var saved = store.levels[currentLevel];
-    var list = [];
-    for (var i = 0; i < saved.list.length; i++) {
-      var q = questionsById[saved.list[i]];
-      if (q) { list.push(q); }
-    }
-    if (list.length === 0) {
-      renderImportResult('本地保存的记录与当前题库对不上（题目 id 全部找不到），已改为重新开始。', true);
-      return;
-    }
-    session = buildSession('resume', saved.order === 'random' ? 'random' : 'sequential', list);
-    session.index = Math.max(0, Math.min(saved.index || 0, list.length - 1));
+  /**
+   * 随机模式：**每次都重新随机**，并清空上一轮随机记录。
+   * 错题仍然记入错题本（records 不动），所以清空的是进度而不是成绩。
+   */
+  function startRandom() {
+    var list = shuffled(questionsForLevel());
+    // 丢掉上一轮随机的进度
+    var box = levelBox(currentLevel);
+    delete box.sessions.random;
+    session = buildSession('random', list, recordsOf(currentLevel));
+    saveSession();
+    renderQuestion();
+  }
 
-    // 更符合直觉：接着往下练，落到第一道未答题。
-    // 存储里的 index 有可能指向已作答的题（例如旧版本保存的位置）。
-    var next = -1;
-    for (var j = 0; j < list.length; j++) {
-      if (!session.records[list[j].id]) { next = j; break; }
-    }
-    if (next !== -1) { session.index = next; }
-
+  /**
+   * 清空顺序模式的答题记录，并回到第 1 题（题目顺序不变）。
+   * 只影响本模式的进度；records 保留，因此错题本不受影响。
+   */
+  function clearSequentialProgress() {
+    if (session.mode !== 'sequential') { return; }
+    session.answered = {};
+    session.index = 0;
+    saveSession();
     renderQuestion();
   }
 
@@ -732,14 +819,12 @@
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
-  /** redo 模式下不显示已有记录：题目一律当作未作答，可以重新选择与提交 */
-  function showsRecords() {
-    return session.mode !== 'redo';
-  }
-
-  /** 是否处于「重做」模式：允许重新作答并覆盖旧记录 */
-  function isRedo() {
-    return session.mode === 'redo';
+  /**
+   * 是否处于随机模式。随机模式每次进入都重建会话，题目一律新建，
+   * 与「顺序模式接着上次做」相对。
+   */
+  function isRandomMode() {
+    return session.mode === 'random';
   }
 
   /** 某道题是否在**本轮**提交过作答 */
@@ -793,8 +878,19 @@
     var box = el('section', 'sheet');
     box.setAttribute('data-sheet', 'grid');
 
-    // 面板标题。与参考图一致：先写模式，再列题目编号与练习进度。
-    box.appendChild(el('div', 'sheet-head', '练习模式'));
+    // 面板标题显示当前模式；顺序模式额外给一个「清空答题」按钮——
+    // 顺序模式的进度会保留到下次进入，所以由用户自己决定何时清零。
+    var head = el('div', 'sheet-head');
+    head.appendChild(el('span', 'sheet-mode',
+      session.mode === 'redo' ? '错题重做' :
+      (isRandomMode() ? '随机模式' : '顺序模式')));
+    if (!isRandomMode() && session.mode !== 'redo') {
+      var clearBtn = el('button', 'btn btn-small', '清空答题');
+      clearBtn.type = 'button';
+      clearBtn.addEventListener('click', clearSequentialProgress);
+      head.appendChild(clearBtn);
+    }
+    box.appendChild(head);
 
     box.appendChild(metaRow('题目编号', q.id));
     /*
@@ -853,7 +949,7 @@
       var i = Number(idx);
       if (!(i >= 0) || i >= session.list.length || i === session.index) { return; }
       session.index = i;
-      saveLevelState();
+      saveSession();
       renderQuestion();
     });
 
@@ -896,7 +992,8 @@
 
   function renderQuestion() {
     var q = currentQuestion();
-    var record = (showsRecords() ? session.records[q.id] : null) || null;
+    // 只认本轮：顺序模式接着上次做时，之前答过的题会带上当时的判定
+    var record = (session.answered[q.id] ? session.records[q.id] : null) || null;
     var isMulti = q.answers.length > 1;
 
     // 整个练习区是一张卡片：左侧题干与选项，右侧答题卡区块。
@@ -1031,7 +1128,6 @@
       submitBtn.disabled = true;
 
       fieldset.addEventListener('change', function () {
-        if (session.records[q.id] && !isRedo()) { return; }
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
           .map(function (item) { return item.key; });
@@ -1042,9 +1138,6 @@
       });
 
       submitBtn.addEventListener('click', function () {
-        // 非 redo 模式下，同一题只有第一次提交计入，避免来回改答案刷分
-        if (session.records[q.id] && !isRedo()) { return; }
-
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
           .map(function (item) { return item.key; });
@@ -1057,7 +1150,7 @@
         session.answered[q.id] = true;   // 记入本轮
         // 作答后立刻落盘，并把当前位置一起记下：
         // 否则「继续练习」会回到上一道未答题，而不是接着往下。
-        saveLevelState();
+        saveSession();
 
         showVerdict(session.records[q.id]);
         left.textContent = progressText();
@@ -1072,19 +1165,19 @@
     prevBtn.addEventListener('click', function () {
       if (session.index === 0) { return; }
       session.index--;
-      saveLevelState();
+      saveSession();
       renderQuestion();
     });
 
     nextBtn.addEventListener('click', function () {
       if (nextBtn.disabled) { return; }
       if (session.index === lastIndex) {
-        saveLevelState();
+        saveSession();
         renderSummary();
         return;
       }
       session.index++;
-      saveLevelState();
+      saveSession();
       renderQuestion();
     });
 
@@ -1149,7 +1242,7 @@
     if (frontier !== -1) {
       actions.appendChild(button('继续未答的题', 'btn-primary', function () {
         session.index = frontier;
-        saveLevelState();
+        saveSession();
         renderQuestion();
       }));
     }
@@ -1160,7 +1253,7 @@
       actions.appendChild(button('回看已答的题', frontier === -1 ? 'btn-primary' : '',
         function () {
           session.index = 0;
-          saveLevelState();
+          saveSession();
           renderQuestion();
         }));
     }
@@ -1241,8 +1334,8 @@
       if (q) { list.push(q); }
     }
     if (list.length === 0) { renderNotebook(); return; }
-    session = buildSession('redo', 'sequential', list);
-    saveLevelState();
+    session = buildSession('redo', list, recordsOf(currentLevel));
+    saveSession();
     renderQuestion();
   }
 
@@ -1251,8 +1344,8 @@
     var q = questionsById[id];
     if (!q) { renderNotebook(); return; }
     delete recordsOf(currentLevel)[id];
-    session = buildSession('redo', 'sequential', [q]);
-    saveLevelState();
+    session = buildSession('redo', [q], recordsOf(currentLevel));
+    saveSession();
     renderQuestion();
   }
 

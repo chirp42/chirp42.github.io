@@ -485,13 +485,20 @@ h1 {
   padding-left: clamp(1rem, 2.5vw, 1.75rem);
 }
 
-/* 面板标题「练习模式」 */
+/* 面板标题：模式名 +（顺序模式下）「清空答题」按钮 */
 .sheet-head {
-  font-size: 1.2rem;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
   padding-bottom: .6rem;
   margin-bottom: .75rem;
   border-bottom: 1px solid var(--line);
+}
+
+.sheet-mode {
+  font-size: 1.2rem;
+  font-weight: 700;
 }
 
 /* 名称 + 值 的信息行 */
