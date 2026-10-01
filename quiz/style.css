@@ -331,6 +331,56 @@ h1 {
 
 .actions .btn { flex: 1; }
 
+/* ---------------- 数据管理（导出 / 导入 / 清空） ---------------- */
+
+.datatools {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+/* 导入 / 导出的结果提示 */
+.notice {
+  margin: 1rem 0 0;
+  padding: .7rem .9rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: .9rem;
+}
+
+.notice.error {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* ---------------- 错题本 ---------------- */
+
+.nb-list {
+  display: grid;
+  gap: .75rem;
+  margin-top: 1rem;
+}
+
+.nb-item {
+  padding: .85rem .95rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.nb-text {
+  margin: 0 0 .4rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.nb-item .note {
+  margin: 0 0 .6rem;
+  font-size: .8rem;
+}
+
 /* 底部悬浮操作条，便于单手操作 */
 @media (max-width: 30rem) {
   .actions {

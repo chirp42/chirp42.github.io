@@ -3,11 +3,16 @@
  * 数据来自 ../data/questions.json（题池）与 ../data/levels.json（级别映射）。
  * 题目内容与级别归属分离：换题库只换数据，本文件不动。
  *
- * v0.3 范围：三类架构 + A 类数据；顺序 / 随机出题；即时判分；前后翻题。
- * 进度与成绩只存在内存中（本地持久化在 v0.4）。
+ * 范围：v0.3 三类架构 + A 类数据、顺序/随机出题、即时判分、前后翻题；
+ *       v0.4 作答记录与练习进度本地持久化、错题本、导出 / 导入。
  *
- * 答题规则：一道题只有第一次提交计入成绩；回看已答的题是只读展示，
- * 显示当时的选择与判定结果。这样可以前后翻阅而不必担心刷分或改错。
+ * 答题规则：一道题只有第一次提交计入成绩；回看已答的题是只读展示。
+ * 重做只发生在错题本里（点「重做这题」会清掉该题记录再作答）。
+ *
+ * 持久化：localStorage 存「每个级别的整份练习状态」——出题顺序、题目列表、
+ * 当前位置、以及按题目 id 记录的作答结果。恢复时按存的 id 顺序重建，
+ * 因此随机练习的顺序也能原样恢复。
+ * 若浏览器禁用本地存储，则退化为仅当次会话有效，并在界面上明确提示。
  *
  * 实现注意：整张卡片先在内存里建好，最后一次性 appendChild 挂载。
  * 不能在主内容已挂载后往里面追加会触发 change 的控件——那时后文才声明的
@@ -21,6 +26,9 @@
   var LEVEL_LABEL = { A: 'A 类', B: 'B 类', C: 'C 类' };
 
   var DATA_DIR = '../data/';
+  var STORAGE_KEY = 'chirp42.quiz.v1';
+  var EXPORT_FORMAT = 'chirp42-quiz-progress';
+  var EXPORT_VERSION = 1;
 
   var mainEl = document.getElementById('main');
   var footEl = document.getElementById('foot-stat');
@@ -54,6 +62,22 @@
     while (node.firstChild) { node.removeChild(node.firstChild); }
   }
 
+  /** 答对判定：所选与答案两个集合完全相等（多选顺序无关） */
+  function isCorrect(selected, answers) {
+    if (selected.length !== answers.length) { return false; }
+    for (var i = 0; i < selected.length; i++) {
+      if (answers.indexOf(selected[i]) === -1) { return false; }
+    }
+    return true;
+  }
+
+  function button(label, className, onClick) {
+    var b = el('button', 'btn' + (className ? ' ' + className : ''), label);
+    b.type = 'button';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
   /**
    * 从自身脚本的 URL 上取版本号（quiz/index.html 里引用的是 app.js?v=x.y.z）。
    * 这样页脚显示的版本一定等于**正在运行的这份代码**的版本：如果浏览器
@@ -78,14 +102,79 @@
     return VERSION ? ' · v' + VERSION : '';
   }
 
-  /** 答对判定：所选与答案两个集合完全相等（多选顺序无关） */
-  function isCorrect(selected, answers) {
-    if (selected.length !== answers.length) { return false; }
-    for (var i = 0; i < selected.length; i++) {
-      if (answers.indexOf(selected[i]) === -1) { return false; }
-    }
-    return true;
+  // ---------------------------------------------------------------- 本地存储
+
+  var storageOk = true;   // 浏览器是否真的能写本地存储
+
+  function emptyStore() {
+    return { version: 1, updatedAt: '', levels: {} };
   }
+
+  function loadStore() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) { return emptyStore(); }
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') { return emptyStore(); }
+      if (!parsed.levels || typeof parsed.levels !== 'object') { parsed.levels = {}; }
+      return parsed;
+    } catch (e) {
+      storageOk = false;
+      return emptyStore();
+    }
+  }
+
+  function saveStore(store) {
+    try {
+      store.updatedAt = new Date().toISOString();
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+      storageOk = true;
+      return true;
+    } catch (e) {
+      storageOk = false;
+      return false;
+    }
+  }
+
+  function clearStore() {
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return true;
+    } catch (e) {
+      storageOk = false;
+      return false;
+    }
+  }
+
+  function recordsOf(level) {
+    var lv = store.levels[level];
+    return (lv && lv.records) ? lv.records : {};
+  }
+
+  /** 某级别已存在的作答统计 */
+  function levelStats(level) {
+    var recs = recordsOf(level);
+    var right = 0, wrong = 0;
+    for (var id in recs) {
+      if (!Object.prototype.hasOwnProperty.call(recs, id)) { continue; }
+      if (recs[id].correct) { right++; } else { wrong++; }
+    }
+    return { right: right, wrong: wrong, done: right + wrong };
+  }
+
+  /** 某级别的错题 id 列表，按题库顺序 */
+  function wrongIdsOf(level) {
+    var recs = recordsOf(level);
+    var ids = levels[level] || [];
+    var out = [];
+    for (var i = 0; i < ids.length; i++) {
+      var r = recs[ids[i]];
+      if (r && !r.correct) { out.push(ids[i]); }
+    }
+    return out;
+  }
+
+  var store = null;   // 首次启动时载入
 
   // ---------------------------------------------------------------- 数据
 
@@ -146,63 +235,307 @@
     var card = el('section', 'card');
     card.appendChild(el('h1', null, '载入失败'));
     card.appendChild(el('p', 'note error', message));
-    var retry = el('button', 'btn btn-primary', '重试');
-    retry.type = 'button';
-    retry.addEventListener('click', start);
-    card.appendChild(retry);
+    card.appendChild(button('重试', 'btn-primary', start));
     mainEl.appendChild(card);
-    if (footEl) { footEl.textContent = '题库未载入'; }
+    if (footEl) { footEl.textContent = '题库未载入' + versionSuffix(); }
   }
 
-  // ---------------------------------------------------------------- 选择模式
+  function storageWarning() {
+    if (storageOk) { return null; }
+    return el('p', 'note error',
+      '浏览器不允许本地存储（可能开了无痕模式），本次的作答记录与进度不会被保存。');
+  }
 
-  function renderModeSelect() {
+  // ---------------------------------------------------------------- 首页
+
+  function renderHome() {
     clear(mainEl);
     var pool = questionsForLevel();
+    var stats = levelStats(LEVEL);
+    var wrongCount = wrongIdsOf(LEVEL).length;
+    var saved = store.levels[LEVEL];
 
     var card = el('section', 'card');
     card.appendChild(el('h1', null, '业余无线电操作证 · 模拟练习'));
     card.appendChild(el('p', 'note',
-      '当前为 ' + LEVEL_LABEL[LEVEL] + ' 题库，共 ' + pool.length + ' 题。' +
+      LEVEL_LABEL[LEVEL] + ' 题库共 ' + pool.length + ' 题。' +
       '题目内容与级别归属分离，B / C 级数据待 v0.5 开放。'));
+
+    var warn = storageWarning();
+    if (warn) { card.appendChild(warn); }
+
+    if (stats.done > 0) {
+      var rate = Math.round((stats.right / stats.done) * 100);
+      card.appendChild(el('p', 'note',
+        '本地已记录：已答 ' + stats.done + ' / ' + pool.length +
+        ' 题，答对 ' + stats.right + ' 题，答错 ' + stats.wrong +
+        ' 题，正确率 ' + rate + '%。'));
+    }
 
     var modes = el('div', 'modes');
 
+    // 有未完成进度时，主按钮是「继续练习」
+    var resumeIndex = saved ? saved.index : -1;
+    var canResume = saved && Array.isArray(saved.list) && saved.list.length > 0 &&
+      resumeIndex >= 0 && resumeIndex < saved.list.length;
+
+    if (canResume) {
+      var seqLabel = saved.order === 'random' ? '随机' : '顺序';
+      var left = saved.list.length - Object.keys(saved.records || {}).length;
+      var contBtn = el('button', 'mode');
+      contBtn.type = 'button';
+      contBtn.appendChild(el('span', 'mode-name', '继续练习'));
+      contBtn.appendChild(el('span', 'mode-desc',
+        '上次是' + seqLabel + '练习，停在第 ' + (resumeIndex + 1) +
+        ' / ' + saved.list.length + ' 题，还剩 ' + left + ' 题未作答。'));
+      contBtn.addEventListener('click', function () { resumeSession(); });
+      modes.appendChild(contBtn);
+    }
+
     var seqBtn = el('button', 'mode');
     seqBtn.type = 'button';
-    seqBtn.appendChild(el('span', 'mode-name', '顺序练习'));
-    seqBtn.appendChild(el('span', 'mode-desc', '按题库编号从第 1 题开始，适合系统过一遍。'));
-    seqBtn.addEventListener('click', function () { startSession(pool, 'sequential'); });
+    seqBtn.appendChild(el('span', 'mode-name', canResume ? '重新顺序练习' : '顺序练习'));
+    seqBtn.appendChild(el('span', 'mode-desc',
+      '按题库编号从第 1 题开始，适合系统过一遍。' +
+      (canResume ? '会清空当前进度，已记录的作答结果保留。' : '')));
+    seqBtn.addEventListener('click', function () { startSession('sequential'); });
     modes.appendChild(seqBtn);
 
     var rndBtn = el('button', 'mode');
     rndBtn.type = 'button';
-    rndBtn.appendChild(el('span', 'mode-name', '随机练习'));
+    rndBtn.appendChild(el('span', 'mode-name', canResume ? '重新随机练习' : '随机练习'));
     rndBtn.appendChild(el('span', 'mode-desc',
-      '每轮把全部 ' + pool.length + ' 题打乱，适合检验掌握程度。'));
-    rndBtn.addEventListener('click', function () { startSession(pool, 'random'); });
+      '每轮把全部 ' + pool.length + ' 题打乱，适合检验掌握程度。' +
+      (canResume ? '会清空当前进度，已记录的作答结果保留。' : '')));
+    rndBtn.addEventListener('click', function () { startSession('random'); });
     modes.appendChild(rndBtn);
 
     card.appendChild(modes);
+
+    // 错题本入口与数据管理
+    var misc = el('div', 'modes');
+    var nbBtn = el('button', 'mode');
+    nbBtn.type = 'button';
+    nbBtn.appendChild(el('span', 'mode-name', '错题本'));
+    nbBtn.appendChild(el('span', 'mode-desc',
+      wrongCount > 0 ? '共 ' + wrongCount + ' 道错题，可逐题重做。' : '暂无错题。'));
+    nbBtn.addEventListener('click', renderNotebook);
+    misc.appendChild(nbBtn);
+    card.appendChild(misc);
+
+    card.appendChild(renderDataTools());
+
     mainEl.appendChild(card);
 
     if (footEl) {
-      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版' + versionSuffix();
+      footEl.textContent = '题库 ' + pool.length + ' 题 · CRAC 2025 年版' +
+        ' · 错题 ' + wrongCount + versionSuffix();
     }
+  }
+
+  /** 导出 / 导入 / 清空 三件套 */
+  function renderDataTools() {
+    var box = el('div', 'datatools');
+    box.appendChild(el('p', 'note',
+      '导出会下载一个 JSON 文件，包含全部级别的作答记录与练习进度；' +
+      '导入会**覆盖**当前本地记录。'));
+
+    var row = el('div', 'actions');
+    row.appendChild(button('导出记录', '', exportProgress));
+
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,application/json';
+    fileInput.style.display = 'none';
+    fileInput.addEventListener('change', function () {
+      if (fileInput.files && fileInput.files[0]) {
+        importProgressFile(fileInput.files[0]);
+      }
+      fileInput.value = '';
+    });
+    row.appendChild(button('导入记录', '', function () { fileInput.click(); }));
+    row.appendChild(button('清空记录', '', confirmClear));
+    box.appendChild(row);
+    box.appendChild(fileInput);
+    return box;
+  }
+
+  // ---------------------------------------------------------------- 导出 / 导入
+
+  function exportProgress() {
+    var payload = {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      app: 'chirp42 ' + (VERSION ? 'v' + VERSION : '(unknown)'),
+      store: store
+    };
+    var text = JSON.stringify(payload, null, 2);
+
+    // 文件名带日期，避免多次导出互相覆盖
+    var d = new Date();
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var name = 'chirp42-quiz-' + d.getFullYear() + pad(d.getMonth() + 1) +
+      pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
+
+    try {
+      var blob = new Blob([text], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // 稍后回收，太早撤销会让部分浏览器下载失败
+      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+      var box = renderNotice('已导出 ' + name);
+      if (box) { box.setAttribute('data-export-ok', '1'); }
+    } catch (e) {
+      renderImportResult('导出失败：' + (e && e.message ? e.message : e), true);
+    }
+  }
+
+  function importProgressFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try {
+        parsed = JSON.parse(String(reader.result));
+      } catch (e) {
+        renderImportResult('导入失败：文件不是合法的 JSON。', true);
+        return;
+      }
+
+      // 兼容两种形态：带外壳的导出文件，或直接就是 store。
+      // 版本号要查对对象：外壳文件的版本在外壳上，裸 store 的版本在自身。
+      var incoming = null;
+      var declaredVersion = null;
+      if (parsed && parsed.format === EXPORT_FORMAT && parsed.store) {
+        incoming = parsed.store;
+        declaredVersion = parsed.version;
+      } else if (parsed && parsed.levels && typeof parsed.levels === 'object') {
+        incoming = parsed;
+        declaredVersion = parsed.version;
+      }
+      if (!incoming) {
+        renderImportResult(
+          '导入失败：这不像是本站导出的记录文件（缺少 levels 字段）。', true);
+        return;
+      }
+      // 只看主版本号：将来 1.1 之类的兼容改动不该被拒
+      if (typeof declaredVersion === 'number' && Math.floor(declaredVersion) > EXPORT_VERSION) {
+        renderImportResult(
+          '导入失败：文件来自更新的版本（version ' + declaredVersion +
+          '），请先更新本页。', true);
+        return;
+      }
+
+      var incomingLevels = Object.keys(incoming.levels);
+      if (incomingLevels.length === 0) {
+        renderImportResult('导入失败：文件里没有任何级别的记录。', true);
+        return;
+      }
+
+      var counts = [];
+      incomingLevels.forEach(function (lv) {
+        var recs = (incoming.levels[lv] && incoming.levels[lv].records) || {};
+        counts.push(lv + ' 级 ' + Object.keys(recs).length + ' 条');
+      });
+
+      if (!window.confirm(
+        '导入将覆盖当前本地记录，无法撤销。\n\n' +
+        '文件内包含：' + counts.join('、') + '\n\n确定继续？')) {
+        renderImportResult('已取消导入。', false);
+        return;
+      }
+
+      store = {
+        version: 1,
+        updatedAt: incoming.updatedAt || new Date().toISOString(),
+        levels: incoming.levels
+      };
+      saveStore(store);
+      renderImportResult('导入完成：' + counts.join('、') + '。');
+    };
+    reader.onerror = function () {
+      renderImportResult('导入失败：读取文件出错。', true);
+    };
+    reader.readAsText(file);
+  }
+
+  function confirmClear() {
+    if (!window.confirm('将清空本地保存的全部作答记录与练习进度，无法撤销。\n\n确定继续？')) {
+      return;
+    }
+    clearStore();
+    store = emptyStore();
+    saveStore(store);
+    renderNotice('已清空本地记录。');
+  }
+
+  function renderNotice(message) {
+    var box = mainEl.querySelector ? mainEl.querySelector('.notice') : null;
+    if (box) { box.parentNode.removeChild(box); }
+    var p = el('p', 'notice', message);
+    mainEl.appendChild(p);
+    return p;
+  }
+
+  function renderImportResult(message, isError) {
+    var box = el('p', 'notice' + (isError ? ' error' : ''), message);
+    clear(mainEl);
+    var card = el('section', 'card');
+    card.appendChild(el('h1', null, '数据管理'));
+    card.appendChild(box);
+    card.appendChild(button('返回首页', 'btn-primary', renderHome));
+    mainEl.appendChild(card);
+    window.scrollTo(0, 0);
   }
 
   // ---------------------------------------------------------------- 练习流程
 
-  function startSession(pool, order) {
+  function saveLevelState() {
+    store.levels[LEVEL] = {
+      order: session.order,
+      list: session.list.map(function (q) { return q.id; }),
+      index: session.index,
+      records: session.records
+    };
+    saveStore(store);
+  }
+
+  function startSession(order) {
+    var pool = questionsForLevel();
+    var list = order === 'random' ? shuffled(pool) : pool.slice();
+    var prev = recordsOf(LEVEL);   // 已答题的结果跨轮次保留
     session = {
       order: order,
-      list: order === 'random' ? shuffled(pool) : pool.slice(),
+      list: list,
       index: 0,
-      // 每题的作答记录：{ selected: [...], correct: bool }
-      // 只有第一次提交会写入，回看时据此还原状态
-      records: {},
-      right: 0,
-      wrong: 0
+      records: prev
+    };
+    saveLevelState();
+    renderQuestion();
+  }
+
+  /** 按本地保存的顺序与位置恢复上次的练习 */
+  function resumeSession() {
+    var saved = store.levels[LEVEL];
+    var list = [];
+    for (var i = 0; i < saved.list.length; i++) {
+      var q = questionsById[saved.list[i]];
+      if (q) { list.push(q); }
+    }
+    if (list.length === 0) {
+      renderImportResult('本地保存的记录与当前题库对不上（题目 id 全部找不到），已改为重新开始。', true);
+      return;
+    }
+    session = {
+      order: saved.order === 'random' ? 'random' : 'sequential',
+      list: list,
+      index: Math.max(0, Math.min(saved.index || 0, list.length - 1)),
+      records: saved.records || {}
     };
     renderQuestion();
   }
@@ -212,13 +545,22 @@
   }
 
   function answeredCount() {
-    return session.right + session.wrong;
+    return Object.keys(session.records).length;
+  }
+
+  function sessionStats() {
+    var right = 0, wrong = 0;
+    for (var id in session.records) {
+      if (!Object.prototype.hasOwnProperty.call(session.records, id)) { continue; }
+      if (session.records[id].correct) { right++; } else { wrong++; }
+    }
+    return { right: right, wrong: wrong };
   }
 
   /** 第一道未作答的题的下标，全部答完则返回 -1 */
   function firstUnanswered() {
     for (var i = 0; i < session.list.length; i++) {
-      if (!session.records[i]) { return i; }
+      if (!session.records[session.list[i].id]) { return i; }
     }
     return -1;
   }
@@ -227,30 +569,29 @@
   function maxAllowedIndex() {
     var frontier = firstUnanswered();
     if (frontier === -1) { return session.list.length - 1; }
-    // 往前找最近的一道已答题；它和 frontier 都允许翻到，取较大者。
     // 注意：不能找到就 return —— 那样在「只答了第 1 题、frontier 为 1」时
     // 会返回 0，把刚答完的题锁在原地无法前进。
     var lastAnswered = -1;
     for (var i = frontier - 1; i >= 0; i--) {
-      if (session.records[i]) { lastAnswered = i; break; }
+      if (session.records[session.list[i].id]) { lastAnswered = i; break; }
     }
     return lastAnswered > frontier ? lastAnswered : frontier;
   }
 
   function progressText() {
-    var tail = answeredCount() > 0
-      ? ' · 对 ' + session.right + ' 错 ' + session.wrong
+    var st = sessionStats();
+    var tail = (st.right + st.wrong) > 0
+      ? ' · 对 ' + st.right + ' 错 ' + st.wrong
       : '';
     return (session.index + 1) + ' / ' + session.list.length + tail;
   }
 
   function renderQuestion() {
     var q = currentQuestion();
-    var record = session.records[session.index] || null;
+    var record = session.records[q.id] || null;
     var isMulti = q.answers.length > 1;
 
     var card = el('section', 'card');
-    // 记录当前题号，便于调试与自动化测试定位（不影响渲染）
     card.setAttribute('data-qid', q.id);
     card.setAttribute('data-type', isMulti ? 'multiple' : 'single');
     card.setAttribute('data-state', record ? 'answered' : 'fresh');
@@ -267,7 +608,6 @@
     bar.appendChild(quit);
     card.appendChild(bar);
 
-    // 题型
     card.appendChild(el('span', 'qtype',
       isMulti ? '多选题（' + q.answers.length + ' 个答案）' : '单选题'));
 
@@ -275,12 +615,11 @@
       card.appendChild(el('span', 'qtype', '已作答，可前后翻看'));
     }
 
-    // 题干
     card.appendChild(el('p', 'qtext', q.question));
 
     if (q.figure) {
       card.appendChild(el('p', 'note',
-        '本题附图 ' + q.figure + '（图片待补，v0.3 先留占位）'));
+        '本题附图 ' + q.figure + '（图片待补，先留占位）'));
     }
 
     // 选项
@@ -300,7 +639,6 @@
     });
     card.appendChild(fieldset);
 
-    // 判定区与操作区
     var verdictSlot = el('div');
     card.appendChild(verdictSlot);
 
@@ -317,7 +655,6 @@
     card.appendChild(actions);
 
     var lastIndex = session.list.length - 1;
-    prevBtn.disabled = session.index === 0;
 
     /** 把选项标成判定后的样子，并填充反馈 */
     function showVerdict(rec) {
@@ -348,7 +685,6 @@
       verdictSlot.appendChild(verdict);
     }
 
-    /** 刷新按钮的可用状态与文案（翻题后状态会变） */
     function refreshNav() {
       prevBtn.disabled = session.index === 0;
       nextBtn.disabled = session.index >= maxAllowedIndex();
@@ -356,15 +692,14 @@
     }
 
     if (record) {
-      // 已答的题：只读回看，不提供重新作答
       showVerdict(record);
       submitBtn.hidden = true;
       left.textContent = progressText();
     } else {
       submitBtn.disabled = true;
-      // ---- 事件：选择 ----
+
       fieldset.addEventListener('change', function () {
-        if (session.records[session.index]) { return; }
+        if (session.records[q.id]) { return; }
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
           .map(function (item) { return item.key; });
@@ -374,21 +709,21 @@
         submitBtn.disabled = picked.length === 0;
       });
 
-      // ---- 事件：提交 ----
       submitBtn.addEventListener('click', function () {
-        // 已答过就不再计入（双保险：按钮已隐藏，但保留判断）
-        if (session.records[session.index]) { return; }
+        if (session.records[q.id]) { return; }
 
         var picked = inputs
           .filter(function (item) { return item.input.checked; })
           .map(function (item) { return item.key; });
         if (picked.length === 0) { return; }
 
-        var ok = isCorrect(picked, q.answers);
-        session.records[session.index] = { selected: picked, correct: ok };
-        if (ok) { session.right++; } else { session.wrong++; }
+        session.records[q.id] = {
+          selected: picked,
+          correct: isCorrect(picked, q.answers)
+        };
+        saveLevelState();          // 每次作答后立刻落盘
 
-        showVerdict(session.records[session.index]);
+        showVerdict(session.records[q.id]);
         left.textContent = progressText();
         submitBtn.hidden = true;
         refreshNav();
@@ -397,20 +732,22 @@
     }
     refreshNav();
 
-    // ---- 事件：前后翻题 ----
     prevBtn.addEventListener('click', function () {
       if (session.index === 0) { return; }
       session.index--;
+      saveLevelState();
       renderQuestion();
     });
 
     nextBtn.addEventListener('click', function () {
       if (nextBtn.disabled) { return; }
       if (session.index === lastIndex) {
+        saveLevelState();
         renderSummary();
         return;
       }
       session.index++;
+      saveLevelState();
       renderQuestion();
     });
 
@@ -422,9 +759,10 @@
   // ---------------------------------------------------------------- 成绩
 
   function renderSummary() {
-    var done = answeredCount();
+    var st = sessionStats();
+    var done = st.right + st.wrong;
     var total = session.list.length;
-    var rate = done > 0 ? Math.round((session.right / done) * 100) : 0;
+    var rate = done > 0 ? Math.round((st.right / done) * 100) : 0;
 
     clear(mainEl);
     var card = el('section', 'card');
@@ -434,56 +772,140 @@
       card.appendChild(el('p', 'note', '还没有作答记录。'));
     } else {
       card.appendChild(el('p', 'note',
-        '已答 ' + done + ' / ' + total + ' 题，答对 ' + session.right +
-        ' 题，答错 ' + session.wrong + ' 题，正确率 ' + rate + '%。'));
+        '已答 ' + done + ' / ' + total + ' 题，答对 ' + st.right +
+        ' 题，答错 ' + st.wrong + ' 题，正确率 ' + rate + '%。'));
+      card.appendChild(el('p', 'note',
+        '记录已保存在本机，刷新或关掉页面都不会丢。'));
     }
 
     var actions = el('div', 'actions');
 
-    // 有未作答的题时，回到第一道未答题
     var frontier = firstUnanswered();
     if (frontier !== -1) {
-      var resumeBtn = el('button', 'btn btn-primary', '继续未答的题');
-      resumeBtn.type = 'button';
-      resumeBtn.addEventListener('click', function () {
+      actions.appendChild(button('继续未答的题', 'btn-primary', function () {
         session.index = frontier;
+        saveLevelState();
         renderQuestion();
-      });
-      actions.appendChild(resumeBtn);
+      }));
     }
 
-    // 答过题才给“回看已答的题”，从第一题开始可前后翻
     if (done > 0) {
-      var reviewBtn = el('button', 'btn' + (frontier === -1 ? ' btn-primary' : ''), '回看已答的题');
-      reviewBtn.type = 'button';
-      reviewBtn.addEventListener('click', function () {
-        session.index = 0;
-        renderQuestion();
-      });
-      actions.appendChild(reviewBtn);
+      actions.appendChild(button('回看已答的题', frontier === -1 ? 'btn-primary' : '',
+        function () {
+          session.index = 0;
+          saveLevelState();
+          renderQuestion();
+        }));
     }
 
-    var againBtn = el('button', 'btn' + (done === 0 ? ' btn-primary' : ''), '再练一次');
-    againBtn.type = 'button';
-    againBtn.addEventListener('click', renderModeSelect);
-    actions.appendChild(againBtn);
+    var wrongCount = wrongIdsOf(LEVEL).length;
+    if (wrongCount > 0) {
+      actions.appendChild(button('去错题本（' + wrongCount + '）', '', renderNotebook));
+    }
+
+    actions.appendChild(button('回首页', done === 0 ? 'btn-primary' : '', renderHome));
 
     card.appendChild(actions);
-    card.appendChild(el('p', 'note',
-      '错题本与进度持久化在 v0.4 实现，当前刷新页面会清零。'));
     mainEl.appendChild(card);
     window.scrollTo(0, 0);
 
     if (footEl) {
-      footEl.textContent = '本次结果不做保存（v0.4 加入错题本）';
+      footEl.textContent = '记录已保存在本机 · 错题 ' + wrongCount + versionSuffix();
     }
+  }
+
+  // ---------------------------------------------------------------- 错题本
+
+  function renderNotebook() {
+    clear(mainEl);
+    var wrongIds = wrongIdsOf(LEVEL);
+
+    var card = el('section', 'card');
+    card.appendChild(el('h1', null, '错题本'));
+    card.appendChild(el('p', 'note',
+      LEVEL_LABEL[LEVEL] + '：共 ' + wrongIds.length + ' 道错题。' +
+      '重做时会重新判定并更新记录；答对后即从错题本移除。'));
+
+    var warn = storageWarning();
+    if (warn) { card.appendChild(warn); }
+
+    if (wrongIds.length === 0) {
+      card.appendChild(el('p', 'note', '暂时没有错题。'));
+      card.appendChild(button('返回首页', 'btn-primary', renderHome));
+      mainEl.appendChild(card);
+      if (footEl) { footEl.textContent = '错题 0' + versionSuffix(); }
+      return;
+    }
+
+    var list = el('div', 'nb-list');
+    wrongIds.forEach(function (id) {
+      var q = questionsById[id];
+      if (!q) { return; }
+      var item = el('div', 'nb-item');
+      item.setAttribute('data-nb-id', id);
+      item.appendChild(el('p', 'nb-text', q.question));
+      var meta = el('p', 'note',
+        '章节 ' + q.chapter + '　正确答案 ' + q.answers.join('') +
+        '　上次选择 ' + (recordsOf(LEVEL)[id].selected || []).join(''));
+      item.appendChild(meta);
+      item.appendChild(button('重做这题', 'btn-small', function () { redoQuestion(id); }));
+      list.appendChild(item);
+    });
+    card.appendChild(list);
+
+    var actions = el('div', 'actions');
+    actions.appendChild(button('全部重做', 'btn-primary', function () {
+      startRedoSession(wrongIds);
+    }));
+    actions.appendChild(button('返回首页', '', renderHome));
+    card.appendChild(actions);
+    mainEl.appendChild(card);
+
+    if (footEl) {
+      footEl.textContent = '错题 ' + wrongIds.length + versionSuffix();
+    }
+  }
+
+  /** 用错题组成一轮练习（顺序与题库一致） */
+  function startRedoSession(ids) {
+    var list = [];
+    for (var i = 0; i < ids.length; i++) {
+      var q = questionsById[ids[i]];
+      if (q) { list.push(q); }
+    }
+    if (list.length === 0) { renderNotebook(); return; }
+    session = {
+      order: 'sequential',
+      list: list,
+      index: 0,
+      records: recordsOf(LEVEL)   // 同一份记录，重做会覆盖对应条目
+    };
+    saveLevelState();
+    renderQuestion();
+  }
+
+  /** 重做单题：清掉它的记录，然后立即进入该题 */
+  function redoQuestion(id) {
+    var q = questionsById[id];
+    if (!q) { renderNotebook(); return; }
+    delete recordsOf(LEVEL)[id];
+    session = {
+      order: 'sequential',
+      list: [q],
+      index: 0,
+      records: recordsOf(LEVEL)
+    };
+    saveLevelState();
+    renderQuestion();
   }
 
   // ---------------------------------------------------------------- 启动
 
   function start() {
     renderLoading();
-    loadData().then(renderModeSelect).catch(function (err) {
+    store = loadStore();
+    if (!store.version) { store.version = 1; }
+    loadData().then(renderHome).catch(function (err) {
       renderError(err && err.message ? err.message : String(err));
     });
   }
